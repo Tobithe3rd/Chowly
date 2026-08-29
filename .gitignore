@@ -1,0 +1,7 @@
+.claude/
+chowly-backend/.env
+chowly-backend/venv/
+chowly-backend/.venv/
+chowly-backend/__pycache__/
+chowly-backend/app/__pycache__/
+*.pyc
