@@ -195,6 +195,37 @@ class MenuItemRead(BaseModel):
     menu_id: int
 
 
+class MenuItemCreate(BaseModel):
+    """Input for POST /restaurants/{restaurant_id}/menu-items.
+
+    All fields except `description` are required. The router attaches
+    `menu_id` based on the restaurant's single menu (one-menu-per-restaurant
+    model — see routers/restaurants.py).
+    """
+
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    item_type: ItemType
+    price: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    availability_status: str = Field(default="available", max_length=32)
+
+
+class MenuItemUpdate(BaseModel):
+    """Input for PATCH /restaurants/{restaurant_id}/menu-items/{item_id}.
+
+    All fields are optional — only those provided are updated. This is a
+    partial update; absent fields are left untouched.
+    """
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    item_type: Optional[ItemType] = None
+    price: Optional[Decimal] = Field(
+        default=None, gt=0, max_digits=10, decimal_places=2
+    )
+    availability_status: Optional[str] = Field(default=None, max_length=32)
+
+
 class MenuRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -204,6 +235,25 @@ class MenuRead(BaseModel):
     status: str
     restaurant_id: int
     items: list[MenuItemRead] = Field(default_factory=list)
+
+
+class RestaurantDetail(BaseModel):
+    """Public detail view of a restaurant with its active menus.
+
+    Returned by GET /restaurants/{id}. Only menus with status='active'
+    are included; items belong to each menu. Phone and email remain
+    hidden for the same reason RestaurantPublic hides them.
+
+    The router constructs this directly from keyword args rather than
+    via `model_validate` on the ORM row, because the active-menu filter
+    is applied in Python after the eager-load. Nested `MenuRead` and
+    `MenuItemRead` still use `from_attributes` to walk the ORM objects.
+    """
+
+    id: int
+    name: str
+    address: str
+    menus: list[MenuRead] = Field(default_factory=list)
 
 
 # --- Order -----------------------------------------------------------------

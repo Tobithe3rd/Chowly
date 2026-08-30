@@ -87,14 +87,15 @@ def register(
     db: Annotated[Session, Depends(get_db)],
 ) -> UserRead:
     # Per-role validation of restaurant_id.
-    if payload.role is Role.ADMIN:
-        if payload.restaurant_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="`restaurant_id` must be null when role is 'admin'.",
-            )
-    else:
+    # - For customer/waiter/chef/bartender: restaurant_id is required.
+    # - For admin: restaurant_id is OPTIONAL. A null restaurant_id
+    #   means a global super-admin; a non-null value creates a
+    #   tenant-scoped admin who can only manage their own restaurant
+    #   (see routers/restaurants.py).
+    if payload.role is not Role.ADMIN:
         _require(payload.restaurant_id, field="restaurant_id", role=payload.role)
+
+    if payload.restaurant_id is not None:
         # The restaurant must exist; otherwise the FK insert would fail
         # with an opaque IntegrityError. We check up front for a clean 400.
         exists = db.execute(
