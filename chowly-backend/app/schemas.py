@@ -285,6 +285,64 @@ class OrderRead(BaseModel):
     items: list[OrderItemRead] = Field(default_factory=list)
 
 
+class OrderItemCreate(BaseModel):
+    """One line in POST /orders.
+
+    Note: `unit_price` and `subtotal` are intentionally NOT accepted
+    from the client. The router looks up MenuItem.price from the database
+    and computes the subtotal server-side. This stops a tampered client
+    from undercharging themselves.
+    """
+
+    menu_item_id: int
+    quantity: int = Field(gt=0, le=99)
+
+
+class OrderCreate(BaseModel):
+    """Request body for POST /orders.
+
+    The customer's `restaurant_id` (from their User row) must match
+    `restaurant_id` here — the router enforces this so a customer
+    belonging to one restaurant can't place an order at another.
+    """
+
+    restaurant_id: int
+    items: list[OrderItemCreate] = Field(min_length=1)
+
+
+class OrderUpdate(BaseModel):
+    """Request body for PATCH /orders/{order_id} (waiter/admin only).
+
+    All fields optional. Only the fields provided are updated.
+    Per the per-field role gate (see routers/orders.py):
+        - `status`, `waiter_id`, `estimated_wait_time` are waiter/admin only.
+    Other fields will be added as separate routes (e.g. line-claim
+    is a dedicated endpoint, not a PATCH on the order).
+    """
+
+    status: Optional[OrderStatus] = None
+    waiter_id: Optional[int] = None
+    estimated_wait_time: Optional[int] = Field(default=None, ge=0, le=480)
+
+
+class OrderItemClaimResponse(BaseModel):
+    """Response for POST /orders/{order_id}/items/{menu_item_id}/claim.
+
+    Returns the updated line so the chef/bartender can confirm the
+    claim took effect.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    order_id: int
+    menu_item_id: int
+    quantity: int
+    unit_price: Decimal
+    subtotal: Decimal
+    chef_id: Optional[int]
+    bartender_id: Optional[int]
+
+
 # --- Complaint / rating / payment ------------------------------------------
 
 
