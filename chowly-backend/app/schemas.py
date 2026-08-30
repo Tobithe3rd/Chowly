@@ -357,6 +357,18 @@ class ComplaintRead(BaseModel):
     customer_id: int
 
 
+class ComplaintCreate(BaseModel):
+    """Request body for POST /orders/{order_id}/complaint.
+
+    The complaint starts in `Open` status; resolution is a separate flow
+    (not exposed yet). The router enforces one-per-order at the
+    application layer so we can return a clean 409 instead of letting
+    the unique constraint raise IntegrityError.
+    """
+
+    complaint_text: str = Field(min_length=1, max_length=2000)
+
+
 class RatingRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -366,6 +378,18 @@ class RatingRead(BaseModel):
     rating_date: datetime
     order_id: int
     customer_id: int
+
+
+class RatingCreate(BaseModel):
+    """Request body for POST /orders/{order_id}/rating.
+
+    `rating_value` is constrained to 1-5 at the schema layer. Same
+    one-per-order rule as Complaint — enforced by the router, not the DB
+    unique constraint, so the conflict is a clean 409.
+    """
+
+    rating_value: int = Field(ge=1, le=5)
+    comment: Optional[str] = Field(default=None, max_length=2000)
 
 
 class PaymentRead(BaseModel):

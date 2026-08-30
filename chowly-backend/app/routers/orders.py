@@ -327,32 +327,161 @@ def get_order(
     return OrderRead.model_validate(order)
 
 
-# --- PATCH /orders/{order_id} (STUB) --------------------------------------
+# --- PATCH /orders/{order_id} ----------------------------------------------
+
+
+# Per-field role gate. Each frozenset lists the fields a given role is
+# allowed to write via PATCH. OrderUpdate's fields (status, waiter_id,
+# estimated_wait_time) are all waiter/admin-only; chef/bartender act on
+# lines via /claim, not on the order header.
+#
+# An empty frozenset means the role is allowed to call the endpoint
+# only to fail validation cleanly — but in practice we 403 non-waiter/
+# non-admin roles below because there's no field they can send.
+_PATCH_ALLOWED_FIELDS: dict[Role, frozenset[str]] = {
+    Role.CUSTOMER: frozenset(),
+    Role.WAITER: frozenset({"status", "waiter_id", "estimated_wait_time"}),
+    Role.CHEF: frozenset(),
+    Role.BARTENDER: frozenset(),
+    Role.ADMIN: frozenset({"status", "waiter_id", "estimated_wait_time"}),
+}
 
 
 @router.patch(
     "/{order_id}",
     response_model=OrderRead,
-    status_code=status.HTTP_501_NOT_IMPLEMENTED,
-    summary="Update an order (STUB — see plan above)",
+    summary="Update an order (waiter/admin only)",
     description=(
-        "Stub endpoint. The full implementation will follow the "
-        "per-field role gate described in the module docstring. "
-        "Currently returns 501."
+        "Per-field role gate: each field in the request body must be "
+        "allowed for the caller's role. Customers are rejected "
+        "outright. Waiters can only act on orders at their own "
+        "restaurant; admins can act on any order. A waiter can set "
+        "waiter_id only to their own waiter profile (so a waiter "
+        "can't hijack another waiter's order); admin can set it to "
+        "any valid waiter at the order's restaurant. See the module "
+        "docstring for the full design plan."
     ),
 )
-def update_order_stub(
+def update_order(
     order_id: int,
     payload: OrderUpdate,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> OrderRead:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "PATCH /orders/{id} is not yet implemented. See the module "
-            "docstring in routers/orders.py for the design plan."
-        ),
+    # Reject customers outright. The role gate below would also block
+    # them, but a flat 403 is clearer than "you sent no allowed fields"
+    # when every field is forbidden.
+    if current_user.role is Role.CUSTOMER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customers cannot update orders.",
+        )
+    if current_user.role is Role.CHEF or current_user.role is Role.BARTENDER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Chefs and bartenders act on order lines via "
+                "POST /orders/{id}/items/{menu_item_id}/claim, "
+                "not PATCH /orders/{id}."
+            ),
+        )
+
+    order = _load_order_with_items(db, order_id)
+
+    # Tenant scope: waiters can only touch orders at their own
+    # restaurant. Admin bypasses this.
+    if (
+        current_user.role is Role.WAITER
+        and current_user.restaurant_id != order.restaurant_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Waiter for restaurant {current_user.restaurant_id} "
+                f"cannot update orders for restaurant "
+                f"{order.restaurant_id}."
+            ),
+        )
+
+    # Find out which fields the client actually included. Pydantic v2
+    # exposes this via `model_fields_set`; it's exactly the keys that
+    # were present in the incoming JSON (so null counts as "set").
+    sent_fields = payload.model_fields_set
+
+    # Per-field role gate. Any field the caller included that isn't
+    # allowed for their role → 403 with the offending field named.
+    allowed = _PATCH_ALLOWED_FIELDS[current_user.role]
+    forbidden = sent_fields - allowed
+    if forbidden:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Field(s) {sorted(forbidden)} are not allowed for "
+                f"role '{current_user.role.value}'."
+            ),
+        )
+
+    if not sent_fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one field must be provided.",
+        )
+
+    # waiter_id self-assignment: a waiter may only set waiter_id to
+    # their own waiter profile. Without this, any waiter could attach
+    # themselves (or anyone) to any order at their restaurant.
+    if (
+        "waiter_id" in sent_fields
+        and current_user.role is Role.WAITER
+    ):
+        if current_user.waiter_profile is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Waiter profile not found for this user.",
+            )
+        if payload.waiter_id != current_user.waiter_profile.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "A waiter can only assign themselves; "
+                    f"waiter_id must be {current_user.waiter_profile.id}."
+                ),
+            )
+
+    # If admin is setting waiter_id, verify the waiter exists and
+    # belongs to the order's restaurant. (A typo from a well-meaning
+    # admin shouldn't silently attach a stranger.)
+    if (
+        "waiter_id" in sent_fields
+        and current_user.role is Role.ADMIN
+        and payload.waiter_id is not None
+    ):
+        waiter = db.get(Waiter, payload.waiter_id)
+        if waiter is None or waiter.restaurant_id != order.restaurant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Waiter {payload.waiter_id} does not exist or "
+                    f"is not at restaurant {order.restaurant_id}."
+                ),
+            )
+
+    # Apply the partial update. exclude_unset ensures we only write
+    # what the client sent, but we already validated the set above so
+    # this is just defense-in-depth.
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(order, field, value)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    # Eager-load items for the response (commit() expires attributes).
+    return OrderRead.model_validate(
+        _load_order_with_items(db, order.id)
     )
 
 

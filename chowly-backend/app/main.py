@@ -9,6 +9,7 @@ mostly for assembly.
 from fastapi import FastAPI
 
 from app.routers import auth as auth_router
+from app.routers import feedback as feedback_router
 from app.routers import orders as orders_router
 from app.routers import restaurants as restaurants_router
 
@@ -30,3 +31,4 @@ def healthcheck() -> dict:
 app.include_router(auth_router.router)
 app.include_router(restaurants_router.router)
 app.include_router(orders_router.router)
+app.include_router(feedback_router.router)
