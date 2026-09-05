@@ -29,6 +29,33 @@ export function isTerminal(status: OrderStatus): boolean {
 }
 
 /**
+ * A "can claim" check for the waiter's per-row action.
+ *
+ * Returns true when the order has no waiter assigned AND is
+ * not terminal. Used by the waiter page to decide whether to
+ * render the ClaimButton (which sets the order's waiter_id to
+ * the current user) and by the waiter detail page's
+ * ActionGroup to decide whether to render Claim as enabled
+ * (with disabled-with-reason otherwise).
+ *
+ * Shape notes:
+ *   - Takes (order) — unlike `canDelay`, which takes
+ *     (order, userPid). canClaim is purely a property of the
+ *     order; the current user never affects eligibility
+ *     (any waiter can take an unclaimed order, modulo
+ *     RouteGuard, which is a route-level concern). The
+ *     predicate stays one argument.
+ *   - The non-terminal check is what keeps the button off
+ *     Served / Cancelled rows; a closed order is never
+ *     re-claimable.
+ */
+export function canClaim(order: OrderRead): boolean {
+  if (order.waiter_id !== null) return false
+  if (isTerminal(order.status)) return false
+  return true
+}
+
+/**
  * A "can delay" check for the waiter's per-row action.
  *
  * Returns true when the order is claimable AND claimed by the

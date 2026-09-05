@@ -30,10 +30,10 @@
     "semantic_hash": "e1e7d19649cafb46ee407ae286311b27"
   },
   "chowly-backend/app/main.py": {
-    "mtime": 1788555376.4405801,
-    "seen": 1788621605.981117,
-    "ast_hash": "459e1a9c250d4d0db64603bc2294654b",
-    "semantic_hash": ""
+    "mtime": 1788117152.240628,
+    "seen": 1788193983.193007,
+    "ast_hash": "a2475aad1c777d99bcf097c5c023b0c3",
+    "semantic_hash": "a2475aad1c777d99bcf097c5c023b0c3"
   },
   "chowly-backend/app/models.py": {
     "mtime": 1788536574.931048,
@@ -138,9 +138,9 @@
     "semantic_hash": ""
   },
   "chowly-frontend/src/app/(app)/customer/orders/[orderId]/page.tsx": {
-    "mtime": 1788556304.5190156,
-    "seen": 1788621605.981132,
-    "ast_hash": "c09799b95838272af675686d70ac53ea",
+    "mtime": 1788554335.5317166,
+    "seen": 1788554737.5904799,
+    "ast_hash": "26aed2577c68e7bf445996fdd08158cd",
     "semantic_hash": ""
   },
   "chowly-frontend/src/app/(app)/customer/page.tsx": {
@@ -150,15 +150,15 @@
     "semantic_hash": "2860cf7e9c4f6cff7fe79081eea12bc1"
   },
   "chowly-frontend/src/app/(app)/layout.tsx": {
-    "mtime": 1788556154.6432722,
-    "seen": 1788621605.9811351,
-    "ast_hash": "9235c0d29f91cd1f1c047f2e7937b6e6",
-    "semantic_hash": ""
+    "mtime": 1788126373.5214634,
+    "seen": 1788193983.193019,
+    "ast_hash": "42a70c8b752246ac7ee53297b4ca6f2b",
+    "semantic_hash": "42a70c8b752246ac7ee53297b4ca6f2b"
   },
   "chowly-frontend/src/app/(app)/waiter/page.tsx": {
-    "mtime": 1788621295.6075468,
-    "seen": 1788621605.9811368,
-    "ast_hash": "dbd0831fed115fdc3f11f60c09831a48",
+    "mtime": 1788554361.6322536,
+    "seen": 1788554737.590482,
+    "ast_hash": "827784bf256c1a1a513a27d88b1eb0b3",
     "semantic_hash": ""
   },
   "chowly-frontend/src/app/layout.tsx": {
@@ -300,10 +300,10 @@
     "semantic_hash": ""
   },
   "chowly-frontend/src/hooks/use-orders.ts": {
-    "mtime": 1788556113.3640094,
-    "seen": 1788621605.9811661,
-    "ast_hash": "823ea219d1a7182dafc10ed651f53859",
-    "semantic_hash": ""
+    "mtime": 1788179756.4436872,
+    "seen": 1788193983.193033,
+    "ast_hash": "cbae94d351797fac1be080de1940d202",
+    "semantic_hash": "cbae94d351797fac1be080de1940d202"
   },
   "chowly-frontend/src/hooks/use-place-order.ts": {
     "mtime": 1788127732.678634,
@@ -492,9 +492,9 @@
     "semantic_hash": ""
   },
   "chowly-frontend/src/lib/order-utils.ts": {
-    "mtime": 1788620403.5087938,
-    "seen": 1788621605.981174,
-    "ast_hash": "2c433c4e3c6a6fe93019195a845ca9ff",
+    "mtime": 1788518248.1314247,
+    "seen": 1788519497.5326421,
+    "ast_hash": "7872000785756ed007a9a38aef57fc68",
     "semantic_hash": ""
   },
   "chowly-frontend/src/hooks/use-create-menu-item.ts": {
@@ -585,42 +585,6 @@
     "mtime": 1788554388.1111994,
     "seen": 1788554737.59049,
     "ast_hash": "3eb716c38a3ab9a5d43533ea4743d265",
-    "semantic_hash": ""
-  },
-  "chowly-frontend/src/app/(app)/customer/orders/page.tsx": {
-    "mtime": 1788557980.9824386,
-    "seen": 1788621605.981133,
-    "ast_hash": "f31c7e2c2d81fd8e115a9ac4d92c25c1",
-    "semantic_hash": ""
-  },
-  "chowly-frontend/src/app/(app)/waiter/orders/[orderId]/page.tsx": {
-    "mtime": 1788620194.1481636,
-    "seen": 1788621605.9811358,
-    "ast_hash": "353cdb9842a0afe05d784de88231021b",
-    "semantic_hash": ""
-  },
-  "chowly-frontend/src/components/shared/claim-button.tsx": {
-    "mtime": 1788620000.691628,
-    "seen": 1788621605.98114,
-    "ast_hash": "928f8d9a7a7587d5fac8beea1eb352e0",
-    "semantic_hash": ""
-  },
-  "chowly-frontend/src/components/shared/mark-delayed-button.tsx": {
-    "mtime": 1788619949.1663682,
-    "seen": 1788621605.981144,
-    "ast_hash": "2556b41404eb10594ced19d5db448da3",
-    "semantic_hash": ""
-  },
-  "chowly-frontend/src/components/shared/mark-served-button.tsx": {
-    "mtime": 1788619866.5695326,
-    "seen": 1788621605.981144,
-    "ast_hash": "50bbfac9f7c4c6c24a610ffe7ec16d64",
-    "semantic_hash": ""
-  },
-  "chowly-frontend/src/hooks/use-mark-delayed.ts": {
-    "mtime": 1788616435.9114993,
-    "seen": 1788621605.981163,
-    "ast_hash": "41f0218425b766c7641e8a29d2acf240",
     "semantic_hash": ""
   }
 }

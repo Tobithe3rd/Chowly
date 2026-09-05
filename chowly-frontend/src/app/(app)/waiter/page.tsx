@@ -63,6 +63,22 @@
  * Mark Served (priority above). The dialog description
  * explicitly tells the waiter the action is reversible.
  *
+ * Row click affordance: each row is a click target for the
+ * new /waiter/orders/{id} detail page. The whole row
+ * navigates on mouse click, Enter, or Space; the order # cell
+ * additionally renders a real <Link> for prefetch, right-click
+ * "Open in new tab", and middle-click. Action buttons
+ * (Claim / Mark delayed / Mark served) stop propagation so
+ * clicking them runs the action without also navigating to
+ * the detail page.
+ *
+ * List vs detail split: the list keeps its single-action
+ * affordance (one button at a time, mutually exclusive by
+ * state) for fast scans. The detail page carries the full
+ * control surface (all three buttons rendered together, each
+ * disabled-with-reason when its precondition isn't met).
+ * Same predicates drive both.
+ *
  * Known gap: the backend's OrderRead has no `claimed_by_name`
  * join, so we can only show "Claimed by you" (when waiter_id
  * matches the JWT's pid) or "Claimed" (when it doesn't). We do
@@ -71,23 +87,18 @@
  */
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
-import { Loader2, RefreshCw } from "lucide-react"
+import { RefreshCw } from "lucide-react"
 
-import { RouteGuard } from "@/components/shared/route-guard"
+import { ClaimButton } from "@/components/shared/claim-button"
 import { ComplaintStatusBadge } from "@/components/shared/complaint-status-badge"
+import { MarkDelayedButton } from "@/components/shared/mark-delayed-button"
+import { MarkServedButton } from "@/components/shared/mark-served-button"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { RouteGuard } from "@/components/shared/route-guard"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -98,13 +109,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useAuth } from "@/hooks/use-auth"
-import { useClaimOrder } from "@/hooks/use-claim-order"
 import { useComplaint } from "@/hooks/use-complaint"
-import { useMarkDelayed } from "@/hooks/use-mark-delayed"
-import { useMarkServed } from "@/hooks/use-mark-served"
 import { useOrders } from "@/hooks/use-orders"
-import { ApiError, describeError } from "@/lib/api-error"
-import { canDelay, isTerminal } from "@/lib/order-utils"
+import { ApiError } from "@/lib/api-error"
+import { canClaim, canDelay, isTerminal } from "@/lib/order-utils"
 import type { OrderRead } from "@/types"
 
 const CURRENCY = new Intl.NumberFormat(undefined, {
@@ -128,11 +136,9 @@ function formatPrice(amount: number): string {
 // rule that mutes Served/Cancelled rows — there's no claim
 // action on rows the page already de-emphasizes, so the two
 // visual rules stay coherent.
-function canClaim(order: OrderRead): boolean {
-  if (order.waiter_id !== null) return false
-  if (isTerminal(order.status)) return false
-  return true
-}
+// (canClaim / canDelay are now imported from @/lib/order-utils
+// — see the imports at the top of this file. The local copy
+// is gone.)
 
 // Relative time formatter for both the polling hint and the
 // "Placed" column. Intl.RelativeTimeFormat does the locale
@@ -304,316 +310,6 @@ function ClaimedCell({
 }
 
 /**
- * MarkServedButton — the waiter-driven Served action.
- *
- * A small outline button that opens a confirm dialog; on confirm
- * the row's status flips to "Served" and the row is muted. The
- * button is only enabled when:
- *   - the order is claimed by the current waiter
- *     (`order.waiter_id === userPid`),
- *   - the order is not already terminal
- *     (`!isTerminal(order.status)` — covers the re-Served case
- *     without needing a second predicate), and
- *   - all lines on the order are Ready
- *     (`order.all_lines_ready === true`).
- *
- * The three predicates map directly to the three backend
- * rejections: 403 if the role check fails (already gated by
- * route-guard, so this is defense-in-depth), 409 if the
- * all_lines_ready condition is false at submit time (a race
- * between the button enabling and a line being un-Ready), and
- * 409 if the order is already Served (the terminal-state rule
- * + idempotency). All three are user-readable backend messages
- * rendered inline in the dialog via describeError.
- *
- * Why an extra Dialog rather than confirming inline: the
- * existing claim/resolve-complaint dialogs all use the same
- * two-step pattern. Confirmation is the unit, and a single
- * pattern across the page keeps the page rhythm consistent.
- *
- * On success: invalidate the orders query so the row flips
- * to Served on the next 10s poll (or the next render after
- * an explicit refetch). The 10s cadence is the canonical
- * freshness signal on this page; we just nudge it forward.
- */
-function MarkServedButton({
-  order,
-  queryClient,
-}: {
-  order: OrderRead
-  queryClient: ReturnType<typeof useQueryClient>
-}) {
-  const [open, setOpen] = useState(false)
-  const markServed = useMarkServed()
-
-  // Reset the inline error state every time the dialog opens
-  // so a prior failure doesn't carry over. The hook's error is
-  // cleared on the next mutate call, but explicit-reset is
-  // cheaper than a re-read-and-check at submit time.
-  useEffect(() => {
-    if (open) markServed.reset()
-  }, [open, markServed])
-
-  function onConfirm() {
-    markServed.mutate(
-      { orderId: order.id },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["orders", "all"] })
-          setOpen(false)
-        },
-        // Errors render inline in the dialog footer; the dialog
-        // stays open so the waiter can read the message and
-        // decide whether to retry (e.g. a 409 on a race where
-        // a chef un-Ready'd a line between the indicator
-        // rendering and the button click).
-      },
-    )
-  }
-
-  const errorMessage = describeError(
-    markServed.error,
-    "Could not mark the order as served.",
-  )
-
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setOpen(true)}
-        aria-label={`Mark order #${order.id} as served`}
-      >
-        Mark served
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Mark order #{order.id} as served?</DialogTitle>
-            <DialogDescription>
-              All lines are ready. This closes the order on the
-              floor — the row will move to the muted state and
-              no further status changes are possible.
-            </DialogDescription>
-          </DialogHeader>
-
-          {errorMessage ? (
-            <div
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
-            >
-              <p className="text-sm text-destructive">{errorMessage}</p>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={markServed.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={onConfirm}
-              disabled={markServed.isPending}
-              aria-busy={markServed.isPending}
-            >
-              {markServed.isPending ? (
-                <>
-                  <Loader2 aria-hidden="true" className="animate-spin" />
-                  Marking…
-                </>
-              ) : (
-                "Mark served"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  )
-}
-
-/**
- * MarkDelayedButton — the waiter-driven Delayed / In Preparation
- * action.
- *
- * A small outline button (parallel to MarkServedButton) that
- * opens a confirm dialog; on confirm the row's status flips.
- * One button handles BOTH directions of the transition:
- *
- *   - order.status === "In Preparation" → "Mark delayed" (sets
- *     to Delayed). The "flag a long order" path; the kitchen/
- *     bar knows the order is taking longer, the customer sees
- *     the new status on their detail page.
- *   - order.status === "Delayed"        → "Mark in preparation"
- *     (sets to In Preparation). The reversal; the kitchen/
- *     bar has caught up.
- *
- * The button is only rendered when `canDelay(order, userPid)`
- * is true (see lib/order-utils): the order is non-terminal
- * and claimed by the current waiter. The action cell on the
- * row is the only call site; the predicate keeps the affordance
- * off Served / Cancelled rows and off rows another waiter
- * claimed.
- *
- * Why one button, two states, instead of two buttons:
- *   - The two targets are mutually exclusive in the UI (an
- *     order is either In Preparation or Delayed, never both).
- *     Showing both buttons in the action cell would invite
- *     clicks that are no-ops.
- *   - The label switch IS the affordance: the waiter always
- *     sees a single forward action, and the label tells them
- *     which direction. The dialog description repeats the
- *     direction so the choice is unambiguous before they
- *     confirm.
- *   - The reversal is what the user explicitly approved
- *     ("v1 includes the reversal"). The dialog description
- *     tells the waiter the action is reversible — "You can
- *     flip it back…" — so they're less anxious about flagging
- *     a borderline case.
- *
- * Why no Served-style pre-condition check: the backend's
- * per-field role gate accepts the Delayed / In Preparation
- * transition unconditionally for the waiter role (the
- * terminal-state rule only fires for Served). The
- * `all_lines_ready` precondition is Served-specific and does
- * not apply here. The MarkDelayedButton and the MarkServedButton
- * are mutually exclusive in the action cell — when
- * `all_lines_ready` becomes true, MarkServedButton takes
- * priority (see OrderRow's action-cell logic).
- *
- * On success: invalidate the orders query so the row's status
- * and the button's label flip on the next 10s poll (or the
- * next render after an explicit refetch). The 10s cadence is
- * the canonical freshness signal on this page; we just nudge
- * it forward.
- */
-function MarkDelayedButton({
-  order,
-  queryClient,
-}: {
-  order: OrderRead
-  queryClient: ReturnType<typeof useQueryClient>
-}) {
-  const [open, setOpen] = useState(false)
-  const markDelayed = useMarkDelayed()
-
-  // The action is value-parameterized: the target is "Delayed"
-  // when the order is currently In Preparation, and "In
-  // Preparation" when it's currently Delayed. The reverse
-  // mapping is unambiguous because the button is only rendered
-  // when canDelay is true, which means the order is not
-  // terminal (Served or Cancelled); the only two eligible
-  // statuses are In Preparation and Delayed, and they map
-  // 1:1 to the target.
-  const isReversal = order.status === "Delayed"
-  const target: "Delayed" | "In Preparation" = isReversal
-    ? "In Preparation"
-    : "Delayed"
-  const buttonLabel = isReversal ? "Mark in preparation" : "Mark delayed"
-  const dialogTitle = isReversal
-    ? `Mark order #${order.id} as in preparation?`
-    : `Mark order #${order.id} as delayed?`
-  const dialogDescription = isReversal
-    ? "The status will switch back to In Preparation. The order is no longer flagged as delayed."
-    : "The status will switch to Delayed. The customer will see the new status on their order page. You can flip it back to In Preparation later if the kitchen catches up."
-  const confirmLabel = isReversal ? "Mark in preparation" : "Mark delayed"
-  const ariaLabel = isReversal
-    ? `Mark order #${order.id} as in preparation`
-    : `Mark order #${order.id} as delayed`
-
-  // Reset the inline error state every time the dialog opens
-  // so a prior failure doesn't carry over. Same pattern as
-  // MarkServedButton.
-  useEffect(() => {
-    if (open) markDelayed.reset()
-  }, [open, markDelayed])
-
-  function onConfirm() {
-    markDelayed.mutate(
-      { orderId: order.id, target },
-      {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ["orders", "all"] })
-          setOpen(false)
-        },
-        // Errors render inline in the dialog footer; the dialog
-        // stays open so the waiter can read the message and
-        // decide whether to retry. Today the only realistic
-        // errors are 500 / network — the backend doesn't have
-        // a Delayed-specific pre-condition — so the inline slot
-        // is mostly defense-in-depth.
-      },
-    )
-  }
-
-  const errorMessage = describeError(
-    markDelayed.error,
-    isReversal
-      ? "Could not mark the order as in preparation."
-      : "Could not mark the order as delayed.",
-  )
-
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setOpen(true)}
-        aria-label={ariaLabel}
-      >
-        {buttonLabel}
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{dialogTitle}</DialogTitle>
-            <DialogDescription>{dialogDescription}</DialogDescription>
-          </DialogHeader>
-
-          {errorMessage ? (
-            <div
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
-            >
-              <p className="text-sm text-destructive">{errorMessage}</p>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={markDelayed.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={onConfirm}
-              disabled={markDelayed.isPending}
-              aria-busy={markDelayed.isPending}
-            >
-              {markDelayed.isPending ? (
-                <>
-                  <Loader2 aria-hidden="true" className="animate-spin" />
-                  Marking…
-                </>
-              ) : (
-                confirmLabel
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  )
-}
-
-/**
  * OrderComplaintIndicator — tiny "Open" badge next to the order
  * status when the order has an open complaint on file.
  *
@@ -732,17 +428,38 @@ function OrderLinesProgressIndicator({
 }
 
 /**
- * OrderRow — the data row, with a stateful Claim dialog.
+ * OrderRow — the data row, with a stateful row click + action.
  *
- * The row owns its own claim UI so multiple rows can have
- * independent dialog state and the page doesn't have to thread
- * per-row state down. The mutation is also instantiated here
- * (rather than at the page level) so the loading/error state is
- * local to the row — one slow claim doesn't block the others.
+ * Row-level navigation: the whole row is a click target for the
+ * new /waiter/orders/{id} detail page. onClick + onKeyDown (Enter
+ * /Space) navigate; role="link" + tabIndex + aria-label make it a
+ * single semantic link for screen readers and keyboard users. The
+ * order # cell additionally renders a real <Link> so right-click
+ * "Open in new tab" and middle-click work, and Next.js prefetches
+ * the detail page on hover. Clicking the order # cell fires both
+ * the link's default navigation and the row's onClick → router.push
+ * to the same URL; the double-call is harmless (router.push to a
+ * page you're already navigating to is a no-op).
  *
- * On success, we invalidate the orders query so the 10s poll
- * window shortens to "next tick." The mutation result is
- * intentionally not used; the cache is the source of truth.
+ * Action buttons (Claim / Mark delayed / Mark served) call
+ * e.stopPropagation() so clicking them runs the action WITHOUT
+ * also navigating to the detail page. Without stopPropagation,
+ * a click on Claim would both open the claim dialog AND
+ * navigate, which is the wrong UX.
+ *
+ * The three action buttons render in a mutually exclusive
+ * priority order, the same as the previous step's plan:
+ *   1. unclaimed + non-terminal     → ClaimButton
+ *   2. claimed by me + all lines
+ *      ready + non-terminal         → MarkServedButton
+ *   3. claimed by me + non-terminal → MarkDelayedButton
+ *   4. claimed by anyone else       → ClaimedCell
+ *   5. terminal (Served/Cancelled)  → "—"
+ *
+ * The new /waiter/orders/{id} detail page is the
+ * full-control surface — when the waiter wants to see the
+ * whole order and apply the right action, they go there.
+ * The list row stays the fast-scan lane.
  */
 function OrderRow({
   order,
@@ -755,98 +472,80 @@ function OrderRow({
   userPid: number | undefined
   queryClient: ReturnType<typeof useQueryClient>
 }) {
+  const router = useRouter()
   const muted = isTerminal(order.status)
   const claimable = canClaim(order)
-  const [claimOpen, setClaimOpen] = useState(false)
-  // Default the ETA to whatever's already on the order, falling
-  // back to 20 (the backend's DEFAULT_ESTIMATED_WAIT_MINUTES at
-  // routers/orders.py). This matches the "soft default" the
-  // user already sees in the ETA cell.
-  const [etaMinutes, setEtaMinutes] = useState<string>(
-    order.estimated_wait_time > 0 ? String(order.estimated_wait_time) : "20",
-  )
-  const claim = useClaimOrder()
+  const serveable =
+    !muted &&
+    order.all_lines_ready &&
+    typeof order.waiter_id === "number" &&
+    order.waiter_id === userPid
+  const delayable = canDelay(order, userPid)
 
-  // Reset the ETA input whenever the dialog opens. Without this,
-  // a waiter who cancelled once would see the prior edit
-  // pre-populated on a different row, which is fine — but a
-  // successful claim (which closes the dialog) followed by a
-  // cancel-then-reopen of the same row would also carry over,
-  // and that's surprising. Reset-on-open is the cheaper
-  // surprise-free behavior.
-  useEffect(() => {
-    if (claimOpen) {
-      setEtaMinutes(
-        order.estimated_wait_time > 0
-          ? String(order.estimated_wait_time)
-          : "20",
-      )
-    }
-  }, [claimOpen, order.estimated_wait_time])
-
-  // Disabled state for the Confirm button. The backend caps ETA
-  // at 480 (OrderUpdate schema), and ge=0 — a negative value
-  // would 422. We also refuse to submit when no waiter profile
-  // id is in the JWT (would 403 with the "waiter_id must be …"
-  // message); the error slot will surface that case cleanly,
-  // but the button is better disabled so the user sees the
-  // pre-flight failure first.
-  const eta = Number(etaMinutes)
-  const etaValid = Number.isFinite(eta) && eta >= 0 && eta <= 480
-  const canSubmit =
-    etaValid && typeof userPid === "number" && !claim.isPending
-
-  function onConfirm() {
-    if (!canSubmit || typeof userPid !== "number") return
-    claim.mutate(
-      {
-        orderId: order.id,
-        status: order.status,
-        estimated_wait_time: eta,
-        waiterId: userPid,
-      },
-      {
-        onSuccess: () => {
-          // Invalidate the unfiltered list so the next poll tick
-          // (≤10s away) shows the updated waiter_id / status /
-          // eta. The 10s cadence is the canonical freshness
-          // signal on this page; we just nudge it forward.
-          queryClient.invalidateQueries({ queryKey: ["orders", "all"] })
-          setClaimOpen(false)
-        },
-        // Errors render inline in the dialog footer (see below).
-        // We do NOT toast here — the dialog stays open so the
-        // waiter can fix the ETA and retry, same pattern as the
-        // cart Sheet footer.
-      },
-    )
-  }
-
-  const errorMessage = describeError(claim.error, "Could not claim the order.")
+  // The row's click navigation. Kept as a local function so
+  // the same URL handler fires for onClick (mouse) and
+  // onKeyDown (Enter/Space), and so the <Link> on the order #
+  // cell can coexist without an event-coordination dance —
+  // both call router.push to the same URL, and the second is
+  // a no-op.
+  const navigate = () => router.push(`/waiter/orders/${order.id}`)
 
   return (
     <TableRow
       // The muted treatment drops the row's hover lift and
       // dims the text. The data row is still selectable and
       // readable — the change is "this is not active work,"
-      // not "this is gone."
-      className={muted ? "text-muted-foreground hover:bg-transparent" : undefined}
+      // not "this is gone." The cursor-pointer + hover
+      // classes also stay so the click affordance is visible
+      // on muted rows; the dimming is just on the foreground
+      // text.
+      className={
+        muted
+          ? "cursor-pointer text-muted-foreground hover:bg-muted/40 focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-inset focus-visible:outline-none"
+          : "cursor-pointer hover:bg-muted/40 focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-inset focus-visible:outline-none dark:focus-visible:bg-amber-400/10 dark:focus-visible:ring-amber-400/40"
+      }
       data-status={order.status}
+      role="link"
+      tabIndex={0}
+      aria-label={`View order #${order.id}`}
+      onClick={navigate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          navigate()
+        }
+      }}
     >
-      <TableCell className="font-semibold tabular-nums text-foreground">
-        {/* Read-only first pass — no detail route exists yet, so
-            the id is plain text. The next step turns this into a
-            link to the staff order-detail page. */}
-        #{order.id}
+      <TableCell className="cursor-pointer p-0 font-semibold tabular-nums text-foreground">
+        {/*
+          The order # cell renders a real <Link> for the
+          affordances only an <a> gives: Next.js prefetch on
+          hover, right-click "Open in new tab", middle-click
+          open in new tab, and a real anchor for screen-reader
+          users who navigate by link list. The row's onClick
+          is the mouse-click-anywhere handler; when the user
+          clicks the id cell, both fire (Link's default
+          navigation + row's onClick → router.push to the
+          same URL) and the second is a no-op. focus-visible
+          lives on the <tr> so the row is the focus stop, not
+          the link.
+        */}
+        <Link
+          href={`/waiter/orders/${order.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="block px-4 py-2 outline-none"
+        >
+          #{order.id}
+        </Link>
       </TableCell>
-      <TableCell className="tabular-nums">
+      <TableCell className="cursor-pointer tabular-nums">
         {/* `customer_id` is the only identifier the list endpoint
             returns; the Customer row's name isn't joined. Showing
             the raw id (as "#N") is honest and avoids a per-row
             N+1 fetch. */}
         #{order.customer_id}
       </TableCell>
-      <TableCell>
+      <TableCell className="cursor-pointer">
         <div className="flex flex-wrap items-center gap-1.5">
           <OrderStatusBadge status={order.status} size="sm" />
           <OrderComplaintIndicator orderId={order.id} />
@@ -856,13 +555,13 @@ function OrderRow({
           <OrderLinesProgressIndicator order={order} />
         </div>
       </TableCell>
-      <TableCell className="text-sm text-foreground">
+      <TableCell className="cursor-pointer text-sm text-foreground">
         {summarizeItems(order)}
       </TableCell>
-      <TableCell className="text-right text-sm font-semibold tabular-nums text-foreground">
+      <TableCell className="cursor-pointer text-right text-sm font-semibold tabular-nums text-foreground">
         {formatPrice(order.total_amount)}
       </TableCell>
-      <TableCell className="text-sm tabular-nums text-foreground">
+      <TableCell className="cursor-pointer text-sm tabular-nums text-foreground">
         {order.estimated_wait_time > 0 ? (
           `${order.estimated_wait_time} min`
         ) : (
@@ -870,7 +569,7 @@ function OrderRow({
         )}
       </TableCell>
       <TableCell
-        className="text-sm tabular-nums"
+        className="cursor-pointer text-sm tabular-nums"
         title={formatOrderDateTime(order.order_date)}
       >
         {formatRelative(new Date(order.order_date).getTime(), now)}
@@ -879,7 +578,7 @@ function OrderRow({
         {/*
           Action cell. Five states, ordered by what's actionable
           first (a row that's already served renders nothing):
-            1. unclaimed + non-terminal     → Claim button
+            1. unclaimed + non-terminal     → ClaimButton
             2. claimed by me + all lines
                ready + non-terminal         → MarkServedButton
             3. claimed by me + non-terminal
@@ -887,8 +586,7 @@ function OrderRow({
                (or claimed by me + Delayed
                + all lines ready, the rare
                case where the user wants
-               to reverse a delay first —
-               see priority note below)
+               to reverse a delay first)
             4. claimed by anyone (incl. me
                when not all ready AND
                not the "claimed by me" set
@@ -906,28 +604,33 @@ function OrderRow({
           the waiter's path back to "Mark delayed" is to
           re-engage the row after the serve. If the user
           wants to mark delayed first (rare), they can do it
-          in two steps: from the next non-ready state — the
-          "ready" signal only flips the column from
-          MarkDelayedButton to MarkServedButton, the status
-          itself doesn't move. In practice the waiter's
-          "flag it delayed" instinct fires BEFORE lines are
-          ready, which is the canDelay-only path.
+          on the detail page (where all three buttons render
+          together with disabled-with-reason states).
+
+          The wrapping <div onClick={stopPropagation}> swallows
+          the click before it bubbles to the row's onClick
+          handler — without it, clicking Claim / Mark served /
+          Mark delayed would also trigger the row's
+          router.push to the detail page, which is the wrong
+          UX (the action would open its dialog AND navigate).
+          The wrapper is the cheaper alternative to threading
+          stopPropagation through each action button's onClick
+          prop, and it works for any future button added to
+          the action cell without further plumbing.
         */}
-        {claimable ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setClaimOpen(true)}
-            aria-label={`Claim order #${order.id}`}
-          >
-            Claim
-          </Button>
-        ) : !muted &&
-          order.all_lines_ready &&
-          typeof order.waiter_id === "number" &&
-          order.waiter_id === userPid ? (
-          <MarkServedButton order={order} queryClient={queryClient} />
-        ) : !muted && canDelay(order, userPid) ? (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="inline-block"
+        >
+          {claimable ? (
+            <ClaimButton
+              order={order}
+              queryClient={queryClient}
+              userPid={userPid}
+            />
+          ) : serveable ? (
+            <MarkServedButton order={order} queryClient={queryClient} />
+        ) : delayable ? (
           <MarkDelayedButton order={order} queryClient={queryClient} />
         ) : order.waiter_id !== null ? (
           <ClaimedCell order={order} userPid={userPid} />
@@ -936,89 +639,8 @@ function OrderRow({
           // — nothing to show, keep the column quiet.
           <span className="text-sm text-muted-foreground">—</span>
         )}
+        </div>
       </TableCell>
-
-      <Dialog open={claimOpen} onOpenChange={setClaimOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Claim order #{order.id}</DialogTitle>
-            <DialogDescription>
-              Set how long this order should take. The customer
-              sees the estimate on the order page.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor={`eta-${order.id}`}>Estimated wait (minutes)</Label>
-            <Input
-              id={`eta-${order.id}`}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={480}
-              step={1}
-              value={etaMinutes}
-              onChange={(e) => setEtaMinutes(e.target.value)}
-              aria-invalid={etaMinutes !== "" && !etaValid}
-              aria-describedby={errorMessage ? `claim-error-${order.id}` : undefined}
-            />
-            {!etaValid && etaMinutes !== "" ? (
-              <p className="text-xs text-destructive">
-                ETA must be between 0 and 480 minutes.
-              </p>
-            ) : null}
-          </div>
-
-          {/*
-            Inline error slot. Same shape as the cart Sheet footer:
-            role="alert" so the change is announced, destructive/30
-            border + destructive/5 background for the rose tint
-            without making it look like a separate surface. The
-            error stays in the dialog so the user can adjust the
-            ETA and retry without losing context.
-          */}
-          {errorMessage ? (
-            <div
-              id={`claim-error-${order.id}`}
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
-            >
-              <p className="text-sm text-destructive">{errorMessage}</p>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setClaimOpen(false)}
-              disabled={claim.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={onConfirm}
-              disabled={!canSubmit}
-              aria-busy={claim.isPending}
-              title={
-                typeof userPid !== "number"
-                  ? "Your account is missing a waiter profile id."
-                  : !etaValid
-                    ? "ETA must be between 0 and 480 minutes."
-                    : undefined
-              }
-            >
-              {claim.isPending ? (
-                <>
-                  <Loader2 aria-hidden="true" className="animate-spin" />
-                  Claiming…
-                </>
-              ) : (
-                "Claim order"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </TableRow>
   )
 }
