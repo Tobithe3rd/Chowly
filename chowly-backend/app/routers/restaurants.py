@@ -9,6 +9,10 @@ Admin-only:
     POST /restaurants/{restaurant_id}/menu-items   — add a menu item
     PATCH /restaurants/{restaurant_id}/menu-items/{item_id}  — partial update
 
+Staff/admin:
+    GET  /restaurants/{restaurant_id}/complaints   — list complaints (?status=
+                                                    Open|Resolved optional)
+
 The admin authorization rule is strict: only an admin whose
 `restaurant_id` matches the URL's `restaurant_id` may write. A global
 admin (`restaurant_id IS NULL`) cannot manage items for any specific
@@ -18,16 +22,26 @@ yet, and would belong in a separate super-admin surface.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import Menu, MenuItem, Restaurant, Role, User
+from app.models import (
+    Complaint,
+    ComplaintStatus,
+    Menu,
+    MenuItem,
+    Order,
+    Restaurant,
+    Role,
+    User,
+)
 from app.schemas import (
+    ComplaintRead,
     MenuItemCreate,
     MenuItemRead,
     MenuItemUpdate,
@@ -113,27 +127,58 @@ def get_restaurant(
 # --- Admin write paths -----------------------------------------------------
 
 
-def _require_admin_for_restaurant(
-    current_user: User, restaurant_id: int
+def _require_staff_for_restaurant(
+    current_user: User, restaurant_id: int, *, admin_only: bool
 ) -> None:
-    """Enforce: admin role AND admin.restaurant_id == restaurant_id.
+    """Enforce: tenant-scoped staff/admin, with an optional role floor.
 
-    A global admin (restaurant_id IS NULL) is rejected: the strict rule
-    requires a tenant-scoped admin. Mismatched tenants are also rejected.
+    The customer role is rejected outright (no profile, no
+    restaurant_id to compare). Staff and admin must match the URL's
+    restaurant_id — same shape as the menu-item PATCH so the two
+    endpoints share a single access rule.
+
+    With admin_only=True, only Role.ADMIN is accepted. This is the
+    menu-item PATCH case: only the tenant manager may change items.
+
+    With admin_only=False, any of waiter/chef/bartender/admin is
+    accepted. This is the complaints-list case: floor staff can see
+    complaints at their restaurant so the kitchen/bar can be aware
+    of an active issue, but only admin can resolve them (see
+    routers/feedback.py:update_complaint).
     """
-    if current_user.role is not Role.ADMIN:
+    if current_user.role is Role.CUSTOMER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer accounts cannot list restaurant complaints.",
+        )
+
+    if admin_only and current_user.role is not Role.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin role required.",
         )
+
     if current_user.restaurant_id != restaurant_id:
+        role_label = current_user.role.value.capitalize()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                f"Admin for restaurant {current_user.restaurant_id} "
-                f"cannot modify items for restaurant {restaurant_id}."
+                f"{role_label} for restaurant "
+                f"{current_user.restaurant_id} cannot list complaints "
+                f"for restaurant {restaurant_id}."
             ),
         )
+
+
+# Thin delegating wrapper kept for the menu-item callers so they
+# don't have to change shape. The complaints-list endpoint uses the
+# broader helper directly with admin_only=False.
+def _require_admin_for_restaurant(
+    current_user: User, restaurant_id: int
+) -> None:
+    _require_staff_for_restaurant(
+        current_user, restaurant_id, admin_only=True
+    )
 
 
 def _get_single_menu_for_restaurant(
@@ -279,3 +324,60 @@ def update_menu_item(
     db.commit()
     db.refresh(item)
     return MenuItemRead.model_validate(item)
+
+
+# --- Staff/admin read: complaints list -----------------------------------
+
+
+@router.get(
+    "/{restaurant_id}/complaints",
+    response_model=list[ComplaintRead],
+    summary="List complaints for a restaurant (staff/admin only)",
+    description=(
+        "Returns complaints at the given restaurant, ordered by "
+        "complaint_date descending, capped at 200. Optional ?status= "
+        "filter accepts 'Open' or 'Resolved'. Staff (waiter/chef/"
+        "bartender) and admin at the same restaurant are admitted; "
+        "customers are rejected. The response shape is the same "
+        "ComplaintRead used on the per-order read; no customer-name "
+        "join (mirrors the customer_id-as-placeholder gap flagged on "
+        "the order read — fix in a later step)."
+    ),
+)
+def list_restaurant_complaints(
+    restaurant_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    status_filter: Annotated[
+        Optional[ComplaintStatus], Query(alias="status")
+    ] = None,
+) -> list[ComplaintRead]:
+    # Existence first so a missing-restaurant request returns 404
+    # rather than 403 from the role check. Same ordering rule as
+    # create_menu_item and update_menu_item.
+    if db.get(Restaurant, restaurant_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Restaurant with id {restaurant_id} does not exist.",
+        )
+
+    _require_staff_for_restaurant(
+        current_user, restaurant_id, admin_only=False
+    )
+
+    # Tenant-scope filter: join through Order.restaurant_id. The
+    # join is the load-bearing filter (a Complaint.order_id is always
+    # set, but defense-in-depth — a future data migration could
+    # orphan a row).
+    stmt = (
+        select(Complaint)
+        .join(Order, Order.id == Complaint.order_id)
+        .where(Order.restaurant_id == restaurant_id)
+        .order_by(Complaint.complaint_date.desc())
+        .limit(200)
+    )
+    if status_filter is not None:
+        stmt = stmt.where(Complaint.status == status_filter)
+
+    rows = db.execute(stmt).scalars().all()
+    return [ComplaintRead.model_validate(r) for r in rows]

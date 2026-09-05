@@ -204,5 +204,22 @@ def login(
     if user.restaurant_id is not None:
         extra_claims["rid"] = user.restaurant_id
 
+    # Surface the role-specific profile id as `pid` so downstream
+    # endpoints (e.g. PATCH /orders/{id} which requires waiter_id to
+    # match the caller's own profile) can be called without a second
+    # round-trip. The four profile relations on User are mutually
+    # exclusive (uselist=False each) and the matching one is
+    # determined by role; chained `or` reads top-down and returns the
+    # first non-null. Admin has no profile row and intentionally
+    # receives no `pid` claim.
+    profile = (
+        user.waiter_profile
+        or user.chef_profile
+        or user.bartender_profile
+        or user.customer_profile
+    )
+    if profile is not None:
+        extra_claims["pid"] = profile.id
+
     token = create_access_token(subject=str(user.id), extra_claims=extra_claims)
     return TokenResponse(access_token=token)

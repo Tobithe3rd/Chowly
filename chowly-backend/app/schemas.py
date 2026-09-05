@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.models import (
     ComplaintStatus,
     ItemType,
+    OrderItemStatus,
     OrderStatus,
     PaymentStatus,
     Role,
@@ -264,11 +265,64 @@ class OrderItemRead(BaseModel):
 
     order_id: int
     menu_item_id: int
+    # Joined from MenuItem.name. Routers eager-load OrderItem.menu_item
+    # via the two-level selectinload in _load_order_with_items, so the
+    # relationship is loaded at serialization time.
+    #
+    # Pydantic v2's from_attributes only walks single-level attributes
+    # — it would look for `menu_item_name` on OrderItem and fail. The
+    # @model_validator below walks the dotted path explicitly and
+    # injects the value under the wire-format name. This is the same
+    # convention used by MenuRead.items: a flat joined field rather
+    # than a nested DTO.
+    menu_item_name: str
+    # Joined from MenuItem.item_type. Same eager-load as
+    # `menu_item_name` — the relationship is already loaded, so
+    # Pydantic reads it directly with no extra query. Surfacing
+    # this on the wire lets the chef/bartender dashboards filter
+    # per role (PRODUCT.md lines 15-16, 29: chef sees food;
+    # bartender sees drinks) without a second round-trip.
+    item_type: ItemType
     quantity: int
     unit_price: Decimal
     subtotal: Decimal
     chef_id: Optional[int]
     bartender_id: Optional[int]
+    # Per-line preparation state. Default is "Preparing" (set by
+    # the migration's server_default and by create_order explicitly
+    # on insert). Chefs/bartenders flip this to "Ready" via
+    # PATCH /orders/{order_id}/items/{menu_item_id} — see
+    # routers/orders.py:update_order_item.
+    status: OrderItemStatus
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_menu_item_fields(cls, values: Any) -> Any:
+        # Dicts that already have menu_item_name (and item_type)
+        # pass through. This keeps manual construction and tests
+        # ergonomic.
+        if isinstance(values, dict):
+            return values
+        # ORM object: read menu_item_name AND item_type from the
+        # joined MenuItem via the relationship that
+        # _load_order_with_items eager-loaded. Both are needed
+        # because Pydantic's from_attributes only walks single-
+        # level attributes — it would look for `menu_item_name`
+        # and `item_type` on OrderItem and fail.
+        menu_item = getattr(values, "menu_item", None)
+        menu_item_name = getattr(menu_item, "name", None)
+        item_type = getattr(menu_item, "item_type", None)
+        # from_attributes will read the rest by name. Merge the
+        # resolved fields on top so they win.
+        if hasattr(values, "__dict__"):
+            merged = {**values.__dict__, "menu_item_name": menu_item_name}
+            if item_type is not None:
+                merged["item_type"] = item_type
+            return merged
+        out: dict = {"menu_item_name": menu_item_name}
+        if item_type is not None:
+            out["item_type"] = item_type
+        return out
 
 
 class OrderRead(BaseModel):
@@ -283,6 +337,15 @@ class OrderRead(BaseModel):
     restaurant_id: int
     waiter_id: Optional[int]
     items: list[OrderItemRead] = Field(default_factory=list)
+    # Derived: true iff the order has at least one item AND every
+    # item's status is "Ready". Computed by the router (see
+    # _compute_all_lines_ready in routers/orders.py) so the value
+    # is a single read-time aggregate, not a stored column.
+    # An order with zero items returns false — shouldn't happen
+    # since OrderCreate.min_length=1, but the guard keeps a future
+    # code path from accidentally reading a vacuous "all ready"
+    # for an empty order.
+    all_lines_ready: bool = False
 
 
 class OrderItemCreate(BaseModel):
@@ -336,11 +399,61 @@ class OrderItemClaimResponse(BaseModel):
 
     order_id: int
     menu_item_id: int
+    # Mirrors OrderItemRead.menu_item_name. The @model_validator walks
+    # the menu_item relationship at serialization time; the claim
+    # router ensures line.menu_item is loaded (see routers/orders.py
+    # claim_order_item).
+    menu_item_name: str
+    # Mirrors OrderItemRead.item_type — joined from the already-loaded
+    # menu_item relationship. Including it here keeps the claim
+    # response shape consistent with OrderItemRead so the chef/
+    # bartender dashboards don't need a second fetch to learn the
+    # line's type.
+    item_type: ItemType
     quantity: int
     unit_price: Decimal
     subtotal: Decimal
     chef_id: Optional[int]
     bartender_id: Optional[int]
+    # Mirrors OrderItemRead.status — included so the claim response
+    # surface stays consistent with the read shape. A chef who
+    # claims a line gets the current status back in the same
+    # payload, with no extra fetch. Pydantic's from_attributes reads
+    # this directly off the ORM line; no @model_validator work is
+    # needed for this field (only the joined menu_item fields need
+    # the resolver).
+    status: OrderItemStatus
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_menu_item_fields(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            return values
+        menu_item = getattr(values, "menu_item", None)
+        menu_item_name = getattr(menu_item, "name", None)
+        item_type = getattr(menu_item, "item_type", None)
+        if hasattr(values, "__dict__"):
+            merged = {**values.__dict__, "menu_item_name": menu_item_name}
+            if item_type is not None:
+                merged["item_type"] = item_type
+            return merged
+        out: dict = {"menu_item_name": menu_item_name}
+        if item_type is not None:
+            out["item_type"] = item_type
+        return out
+
+
+class OrderItemUpdate(BaseModel):
+    """Request body for PATCH /orders/{order_id}/items/{menu_item_id}.
+
+    The only mutable field today is `status`, and the only legal
+    transition is Preparing -> Ready. Other fields are immutable; the
+    router enforces both the per-field role gate and the state
+    machine, so this schema intentionally exposes a single required
+    field. Mirrors ComplaintUpdate's shape.
+    """
+
+    status: OrderItemStatus
 
 
 # --- Complaint / rating / payment ------------------------------------------
@@ -367,6 +480,19 @@ class ComplaintCreate(BaseModel):
     """
 
     complaint_text: str = Field(min_length=1, max_length=2000)
+
+
+class ComplaintUpdate(BaseModel):
+    """Request body for PATCH /orders/{order_id}/complaint.
+
+    The only mutable field today is `status`, and the only legal
+    transition is Open -> Resolved (admin-only). Other fields are
+    immutable; the router enforces both the field gate and the
+    transition rule, so this schema intentionally exposes a single
+    required field.
+    """
+
+    status: ComplaintStatus
 
 
 class RatingRead(BaseModel):

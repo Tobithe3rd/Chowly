@@ -1,7 +1,53 @@
+# Tools / agent state
 .claude/
+
+# --- Backend (Python / FastAPI) --------------------------------------------
 chowly-backend/.env
 chowly-backend/venv/
 chowly-backend/.venv/
 chowly-backend/__pycache__/
 chowly-backend/app/__pycache__/
 *.pyc
+
+# --- Frontend (Next.js / Node) --------------------------------------------
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+chowly-frontend/node_modules
+chowly-frontend/.pnp
+chowly-frontend/.pnp.*
+chowly-frontend/.yarn/*
+!chowly-frontend/.yarn/patches
+!chowly-frontend/.yarn/plugins
+!chowly-frontend/.yarn/releases
+!chowly-frontend/.yarn/versions
+
+# testing
+chowly-frontend/coverage
+
+# next.js
+chowly-frontend/.next/
+chowly-frontend/out/
+
+# production
+chowly-frontend/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+chowly-frontend/.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+chowly-frontend/.env*
+
+# vercel
+chowly-frontend/.vercel
+
+# typescript
+chowly-frontend/*.tsbuildinfo
+chowly-frontend/next-env.d.ts

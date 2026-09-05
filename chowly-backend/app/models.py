@@ -56,6 +56,28 @@ class ComplaintStatus(PyEnum):
     RESOLVED = "Resolved"
 
 
+class OrderItemStatus(PyEnum):
+    """OrderItem — per-line preparation state.
+
+    PREPARING covers both the "unclaimed" and "claimed but not yet
+    ready" states — the existing `chef_id` / `bartender_id` FKs
+    already carry the claim signal, so a separate "Claimed" enum
+    value would be redundant. READY is the terminal state for the
+    line; the chef/bartender flips a line to READY via
+    PATCH /orders/{order_id}/items/{menu_item_id}.
+
+    PRODUCT.md line 35 defines the lifecycle as
+    `unclaimed -> claimed -> prepared`; the "prepared" state is
+    what this enum names READY. The two states map to a 2-value
+    PostgreSQL enum; expanding to 3 values is a 1-line migration
+    if a future step needs the full 3-state distinction (e.g.
+    analytics on lines abandoned in PREPARING for >20 minutes).
+    """
+
+    PREPARING = "Preparing"
+    READY = "Ready"
+
+
 class PaymentStatus(PyEnum):
     PENDING = "Pending"
     COMPLETED = "Completed"
@@ -292,6 +314,20 @@ class OrderItem(Base):
     chef_id = Column(Integer, ForeignKey("chefs.id"), nullable=True)
     bartender_id = Column(
         Integer, ForeignKey("bartenders.id"), nullable=True
+    )
+    # Per-line preparation state. See OrderItemStatus for the
+    # rationale behind the 2-value enum (PRODUCT.md lifecycle note).
+    # The Alembic migration that introduced this column sets
+    # server_default='Preparing' so existing rows backfill cleanly;
+    # we don't repeat that here because the model layer doesn't
+    # need a default — the DB enforces NOT NULL on read.
+    status = Column(
+        Enum(
+            OrderItemStatus,
+            name="order_item_status_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
     )
 
     order = relationship("Order", back_populates="items")
