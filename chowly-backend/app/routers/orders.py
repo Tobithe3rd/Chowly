@@ -35,19 +35,30 @@ Allowed fields per role:
 
 Implementation rules when this PATCH is built:
 
-  1. Reject if `current_user.role` is `customer` (customers don't PATCH
-     their own orders — they place a new one if they need to change it,
-     or call /complaints for problems. If you actually want customers
-     to cancel, add an explicit `OrderCancel` endpoint with a narrower
-     contract rather than reusing PATCH.)
+  1. Customer cancellation: customers ARE admitted to this PATCH for
+     the narrow purpose of cancelling their own order. The per-field
+     gate below gives them exactly one allowed field (`status`), and
+     the handler enforces that the value is `Cancelled` only, the
+     caller is the order's owning customer, and the cancel is
+     within CUSTOMER_CANCEL_WINDOW (10 minutes) of order_date. Any
+     other value from a customer is 403; any later attempt is 409.
+     This is a deliberate exception to the original "customers don't
+     PATCH" stance — the alternative (a separate OrderCancel endpoint
+     with the same shape) was considered and rejected because the
+     complaint-resolve PATCH already establishes the
+     "one-role-one-transition-terminal-target" pattern.
   2. Build a per-field role gate: each field in the request body must
      belong to the caller's role. If a customer calls this and sends
-     `{"status": "Cancelled"}`, return 403 with the offending field name.
+     any field other than `status`, return 403 with the offending
+     field name. If a customer sends `status` with a non-`Cancelled`
+     value, the customer-cancel block below returns 403.
   3. The PATCH body is the `OrderUpdate` schema (status, waiter_id,
      estimated_wait_time — all optional). Don't try to support line-level
      fields here; the `/claim` endpoint handles those.
   4. Authorization on the order itself: a waiter/chef can only PATCH
      orders at their own `restaurant_id`. Admin can PATCH any order.
+     Customers can only PATCH their own orders (enforced in the
+     customer-cancel block).
   5. Optimistic concurrency: include `version` on Order and require
      callers to send the version they last saw; reject with 409 on
      mismatch. Skipped for now (not requested), but flag here so the
@@ -62,11 +73,12 @@ is fully implemented and demonstrates the same role-permission pattern.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import get_current_user
@@ -440,39 +452,52 @@ def get_order(
 # Per-field role gate. Each frozenset lists the fields a given role is
 # allowed to write via PATCH. OrderUpdate's fields (status, waiter_id,
 # estimated_wait_time) are all waiter/admin-only; chef/bartender act on
-# lines via /claim, not on the order header.
-#
-# An empty frozenset means the role is allowed to call the endpoint
-# only to fail validation cleanly — but in practice we 403 non-waiter/
-# non-admin roles below because there's no field they can send.
+# lines via /claim, not on the order header. Customers are admitted
+# for the narrow purpose of cancelling their own order — see the
+# customer-cancel block in update_order and CUSTOMER_CANCEL_WINDOW
+# below.
 _PATCH_ALLOWED_FIELDS: dict[Role, frozenset[str]] = {
-    Role.CUSTOMER: frozenset(),
+    Role.CUSTOMER: frozenset({"status"}),
     Role.WAITER: frozenset({"status", "waiter_id", "estimated_wait_time"}),
     Role.CHEF: frozenset(),
     Role.BARTENDER: frozenset(),
     Role.ADMIN: frozenset({"status", "waiter_id", "estimated_wait_time"}),
 }
 
+# Customer self-cancel window. A customer can only PATCH their own
+# order to status=Cancelled within this many minutes of order_date;
+# beyond that the cancel is rejected with 409. The same constant
+# drives the frontend's "Cancellable until HH:MM" display (computed
+# client-side as a hint only — the server's check is the source of
+# truth). 10 minutes is long enough to cover the "I changed my mind"
+# case but short enough to bound the operational cost of a customer
+# cancelling a kitchen that's already started.
+CUSTOMER_CANCEL_WINDOW = timedelta(minutes=10)
+
 
 @router.patch(
     "/{order_id}",
     response_model=OrderRead,
-    summary="Update an order (waiter/admin only)",
+    summary="Update an order (customer cancel, or waiter/admin general)",
     description=(
         "Per-field role gate: each field in the request body must be "
-        "allowed for the caller's role. Customers are rejected "
-        "outright. Waiters and admins can only act on orders at "
-        "their own restaurant (tenant-scoped, mirroring the "
-        "get_order rule). A waiter can set waiter_id only to their "
-        "own waiter profile (so a waiter can't hijack another "
-        "waiter's order); admin can set it to any valid waiter at "
-        "the order's restaurant. Setting status to 'Served' is "
-        "terminal (a Served order cannot be moved back to another "
-        "status, mirroring the no-reopen rule on resolved "
-        "complaints and ready lines); a waiter may only set Served "
-        "when all_lines_ready is true, and admin can override the "
-        "all_lines_ready gate. See the module docstring for the "
-        "full design plan."
+        "allowed for the caller's role. Customers are admitted only "
+        "to cancel their own order — the only allowed field is "
+        "`status`, the only allowed value is `Cancelled`, and the "
+        "request must arrive within 10 minutes of order_date. "
+        "Waiters and admins can only act on orders at their own "
+        "restaurant (tenant-scoped, mirroring the get_order rule). "
+        "A waiter can set waiter_id only to their own waiter profile "
+        "(so a waiter can't hijack another waiter's order); admin "
+        "can set it to any valid waiter at the order's restaurant. "
+        "Setting status to 'Served' is terminal (a Served order "
+        "cannot be moved back to another status, mirroring the "
+        "no-reopen rule on resolved complaints and ready lines); a "
+        "waiter may only set Served when all_lines_ready is true, "
+        "and admin can override the all_lines_ready gate. Cancelled "
+        "is also terminal: a Cancelled order cannot be reopened, "
+        "and a re-mark of the same status is a 409. See the module "
+        "docstring for the full design plan."
     ),
 )
 def update_order(
@@ -481,14 +506,12 @@ def update_order(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> OrderRead:
-    # Reject customers outright. The role gate below would also block
-    # them, but a flat 403 is clearer than "you sent no allowed fields"
-    # when every field is forbidden.
-    if current_user.role is Role.CUSTOMER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Customers cannot update orders.",
-        )
+    # Reject chef and bartender roles outright — they act on
+    # individual lines via /claim and /items/{id}, not on the
+    # order header. Customers, waiters, and admins are admitted
+    # to the body of the handler; their access is then narrowed
+    # by the per-field gate below (and, for customers, the
+    # customer-cancel block further down).
     if current_user.role is Role.CHEF or current_user.role is Role.BARTENDER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -501,13 +524,18 @@ def update_order(
 
     order = _load_order_with_items(db, order_id)
 
-    # Tenant scope: staff and admin can only touch orders at their
-    # own restaurant. Customer/chef/bartender are already rejected
-    # above (lines 486-499), so the only roles that reach this
-    # point are WAITER and ADMIN — both must match. Mirrors the
-    # get_order tenant check (see lines 415-427) so the read and
-    # write paths share a single access rule; same status code,
-    # same role-tagging detail shape.
+    # Tenant scope: staff, admin, and the customer-cancel path
+    # can only touch orders at the same restaurant. Chef and
+    # bartender are already rejected above; customer reach this
+    # point only via the cancel path. A cross-tenant cancellation
+    # attempt (customer 1 trying to cancel an order at restaurant
+    # 2) hits this 403 before the customer-cancel block's
+    # ownership check, so the "you can only cancel your own
+    # orders" message is only seen for same-tenant-but-different-
+    # customer attempts. Mirrors the get_order tenant check (see
+    # lines 415-427) so the read and write paths share a single
+    # access rule; same status code, same role-tagging detail
+    # shape.
     if current_user.restaurant_id != order.restaurant_id:
         role_label = current_user.role.value.capitalize()
         raise HTTPException(
@@ -582,6 +610,67 @@ def update_order(
                 ),
             )
 
+    # Customer-cancel block. Admitted above (the early customer
+    # 403 is gone); narrowed here to the "customer cancels own
+    # order" path. Runs after the per-field gate so a customer
+    # who sends a forbidden field still gets the field-list 403,
+    # and before the state-machine block so the timer check and
+    # the "already Cancelled" check are distinct error surfaces
+    # (the timer 409 says "the window has passed"; the
+    # state-machine 409 says "this order is already Cancelled").
+    #
+    # The check is split into three failure paths, each with a
+    # specific message:
+    #   - Ownership: 403, "You can only cancel your own orders."
+    #   - Value:     403, "Customers can only set status to Cancelled."
+    #   - Timer:     409, "the 10-minute window has passed."
+    # The state-machine block below handles a fourth case
+    # (already Cancelled) with its own message, so a double-cancel
+    # from the same customer is distinguishable from a stale-timer
+    # cancel.
+    if current_user.role is Role.CUSTOMER:
+        # 1. Ownership. The customer's Customer profile must own
+        # the order. A customer with no profile is a data
+        # inconsistency; surface as 403 (same as _require_customer),
+        # not 500.
+        customer = _require_customer(current_user)
+        if order.customer_id != customer.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only cancel your own orders.",
+            )
+        # 2. Value. The per-field gate above already enforced
+        # that `status` is the only field the customer is allowed
+        # to send. Here we narrow the value to Cancelled only.
+        # Anything else (In Preparation, Delayed, Served) is
+        # closed surface for the customer role — admin/staff
+        # can still set those via the same PATCH.
+        if payload.status is not OrderStatus.CANCELLED:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Customers can only set status to Cancelled, "
+                    f"not {payload.status.value}."
+                ),
+            )
+        # 3. Timer. order_date is timezone-aware (set by the DB's
+        # server_default=func.now() at INSERT); we use the DB's
+        # current time as the source of truth for "now" too, so
+        # the comparison is app-server-clock-skew-free. The
+        # boundary is strict: a request at exactly t+10min is
+        # rejected as "the window has passed". Comparison
+        # operations on offset-naive vs offset-aware datetimes
+        # raise in Python, but both sides here are tz-aware.
+        db_now = db.execute(select(func.now())).scalar_one()
+        if db_now > order.order_date + CUSTOMER_CANCEL_WINDOW:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Order {order.id} can no longer be cancelled; "
+                    f"the 10-minute window has passed."
+                ),
+            )
+
     # Served transition gate. Setting `status` to "Served" is a
     # one-way door — the kitchen/bar signal is the upstream
     # prerequisite (every line is Ready), and the indicator already
@@ -631,6 +720,34 @@ def update_order(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Order {order.id} is Served; status is terminal "
+                f"and cannot be changed back to "
+                f"{payload.status.value}."
+            ),
+        )
+
+    # State machine: Cancelled is also terminal, parallel to
+    # Served above. Same shape: a no-op re-mark is rejected with
+    # 409, and any non-Cancelled value is rejected (you can't
+    # "uncancel" an order — the customer is expected to place a
+    # new one if they want to retry). This was a silent-success
+    # gap before customer-cancellation shipped: a customer
+    # double-clicking the cancel button (or the 10-minute window
+    # expiring between the two clicks) used to get a 200 with
+    # the same payload, which is a confusing no-op. The 409
+    # message names the state so the user can read the source
+    # of the rejection directly.
+    if "status" in sent_fields and order.status is OrderStatus.CANCELLED:
+        if payload.status is OrderStatus.CANCELLED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Order {order.id} is already Cancelled."
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Order {order.id} is Cancelled; status is terminal "
                 f"and cannot be changed back to "
                 f"{payload.status.value}."
             ),

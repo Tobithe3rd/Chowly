@@ -26,7 +26,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
-import { Clock, Loader2, MessageSquareWarning, Receipt, Star } from "lucide-react"
+import { Ban, Clock, Loader2, MessageSquareWarning, Receipt, Star } from "lucide-react"
 
 import { ComplaintStatusBadge } from "@/components/shared/complaint-status-badge"
 import { LineReadyBadge } from "@/components/shared/line-ready-badge"
@@ -55,6 +55,7 @@ import {
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { useCancelOrder } from "@/hooks/use-cancel-order"
 import { useComplaint } from "@/hooks/use-complaint"
 import { useFileComplaint } from "@/hooks/use-file-complaint"
 import { useFileRating } from "@/hooks/use-file-rating"
@@ -103,6 +104,39 @@ function formatOrderDate(iso: string): string {
     timeStyle: "short",
   }).format(d)
 }
+
+/**
+ * formatTime — time-only rendering, used by the cancel card's
+ * "Cancellable until HH:MM" line.
+ *
+ * Separate from formatOrderDate because the cancel card
+ * intentionally surfaces only the time, not the full date —
+ * the user just placed the order, so the date is in the
+ * "Placed" card and adding it again would be visual noise.
+ * `timeStyle: "short"` is the locale's short time (e.g.
+ * "12:34 PM" in en-US, "12:34" in en-GB); Intl handles the
+ * AM/PM-vs-24h choice from the viewer's locale.
+ */
+function formatTime(d: Date): string {
+  if (Number.isNaN(d.getTime())) return ""
+  return new Intl.DateTimeFormat(undefined, {
+    timeStyle: "short",
+  }).format(d)
+}
+
+/**
+ * CUSTOMER_CANCEL_WINDOW_MS — the cancel window, in
+ * milliseconds, mirrored from the backend's
+ * `CUSTOMER_CANCEL_WINDOW = timedelta(minutes=10)` at
+ * routers/orders.py. The frontend uses this for two things:
+ *   - "Cancellable until HH:MM" timestamp display.
+ *   - Disabling the cancel button when the window has passed
+ *     (the server is still the source of truth; this is a
+ *     hint, not a security boundary).
+ * The two values must stay in sync; a backend change here
+ * requires a frontend change at the same commit.
+ */
+const CUSTOMER_CANCEL_WINDOW_MS = 10 * 60 * 1000
 
 /**
  * formatFeedbackDate — same shape as formatOrderDate, kept as a
@@ -523,6 +557,18 @@ function OrderView({ order }: { order: OrderRead }) {
           </div>
         </CardContent>
       </Card>
+
+      {/*
+        CancelOrderCard sits between the items card and the
+        FeedbackCard. The cancel action is "void the order
+        before completion" — closer in lifecycle to the
+        items card (what's about to be voided) than to the
+        FeedbackCard (post-completion feedback). The card
+        gates itself to non-terminal orders; in this
+        branch the order is non-terminal, so the card
+        always renders here.
+      */}
+      <CancelOrderCard order={order} />
 
       <FeedbackCard orderId={order.id} />
 
@@ -1400,6 +1446,239 @@ function FileRatingDialog({
               </>
             ) : (
               "Submit rating"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// --- CancelOrderCard + dialog --------------------------------------------
+
+/**
+ * CancelOrderCard — the "Cancel this order" surface on the
+ * customer order detail page.
+ *
+ * Renders only in the live branch (the OrderView's
+ * `order.status !== "Cancelled"` gate and the page-level
+ * non-terminal gate above it). A Served order doesn't reach
+ * the live branch; a Cancelled order is short-circuited
+ * before this component even mounts. The card doesn't
+ * duplicate the gate — by the time it renders, the order
+ * is non-terminal.
+ *
+ * Two visible states:
+ *   - "Window open" — shows the cancellable-until time and
+ *     an enabled Cancel button. Clicking opens the
+ *     CancelOrderDialog.
+ *   - "Window closed" — shows "Cancellation window has
+ *     passed." and a disabled button. The disabled button
+ *     is the affordance: the user understands the action is
+ *     no longer available without reading a separate error
+ *     message, and the server is the source of truth (a
+ *     user who manages to click through still gets a 409
+ *     from the backend, which the dialog would render — but
+ *     the dialog is never opened because the button is
+ *     disabled).
+ *
+ * The "window open" computation is at render time, not
+ * live. The page re-renders on each useOrder poll (every
+ * 25s while the order is non-terminal), so the card
+ * flips from open to closed within at most 25s of the
+ * boundary. A user who lingers on the page and clicks the
+ * button between the local-clock boundary and the next
+ * poll will see a 409 from the server — the dialog
+ * handles that case the same way every other dialog does.
+ *
+ * The card owns its dialog state (the same pattern as
+ * FeedbackCard): the dialog mounts only when `open` is
+ * true, and unmounts on close — so a successful cancel
+ * (which closes the dialog) cleanly drops the dialog
+ * element on the same render the order flips to the
+ * Cancelled short-circuit.
+ */
+function CancelOrderCard({ order }: { order: OrderRead }) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+
+  // The cancellable-until timestamp is order_date + 10
+  // minutes (mirrored from the backend's
+  // CUSTOMER_CANCEL_WINDOW). Parsed once per render — the
+  // order object is the source of truth, and the calculation
+  // is cheap (one Date parse + add).
+  const orderDateMs = new Date(order.order_date).getTime()
+  const cancellableUntil = new Date(
+    orderDateMs + CUSTOMER_CANCEL_WINDOW_MS,
+  )
+  const windowOpen =
+    Number.isFinite(orderDateMs) && Date.now() < cancellableUntil.getTime()
+
+  return (
+    <Card size="sm" className="mt-6">
+      <CardHeader>
+        <div className="flex items-start gap-2">
+          <Ban
+            aria-hidden="true"
+            className="mt-0.5 size-4 text-muted-foreground"
+          />
+          <div>
+            <CardTitle>Cancel this order</CardTitle>
+            <CardDescription>
+              {windowOpen ? (
+                <>
+                  Cancellable until {formatTime(cancellableUntil)}.
+                </>
+              ) : (
+                <>Cancellation window has passed.</>
+              )}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setOpen(true)}
+          disabled={!windowOpen}
+          aria-label="Cancel this order"
+          title={
+            windowOpen
+              ? undefined
+              : "The 10-minute cancellation window has passed."
+          }
+        >
+          Cancel order
+        </Button>
+      </CardContent>
+
+      {/*
+        Dialog mounts at the bottom of the card, same shape
+        as FeedbackCard. The card owns the open/close state;
+        the dialog is fully driven by props. On a successful
+        cancel, the parent invalidates the order query so the
+        page re-fetches and the OrderView's Cancelled
+        short-circuit takes over.
+      */}
+      {open ? (
+        <CancelOrderDialog
+          orderId={order.id}
+          onClose={() => setOpen(false)}
+          onCancelled={() => {
+            setOpen(false)
+            queryClient.invalidateQueries({ queryKey: ["order", order.id] })
+            queryClient.invalidateQueries({ queryKey: ["orders", "all"] })
+          }}
+        />
+      ) : null}
+    </Card>
+  )
+}
+
+/**
+ * CancelOrderDialog — the "are you sure?" prompt for
+ * customer-initiated cancellation.
+ *
+ * No form fields — the action is a single click, and the
+ * server is the source of truth for what's legal. The
+ * dialog body is one short sentence explaining the action
+ * (mirrors the brevity of MarkServedButton and
+ * MarkDelayedButton: those dialogs also have no input
+ * fields, just confirm/cancel).
+ *
+ * The cancel button is always enabled unless the mutation
+ * is in flight; the server is the authority on whether the
+ * cancel is legal (timer, ownership, value, terminal
+ * state). All four 409/403 failure modes render via
+ * describeError with the action-specific fallback — same
+ * pattern as the FileComplaintDialog's 409 handling, but
+ * without the special-cased message. The backend's
+ * messages are specific enough ("the 10-minute window has
+ * passed", "is already Cancelled", "can only cancel your
+ * own orders") that no client-side translation is needed.
+ *
+ * The dialog stays open on failure so the user can read
+ * the message and decide whether to retry. A successful
+ * cancel closes the dialog via the parent's onCancelled.
+ */
+function CancelOrderDialog({
+  orderId,
+  onClose,
+  onCancelled,
+}: {
+  orderId: number
+  onClose: () => void
+  onCancelled: () => void
+}) {
+  const cancel = useCancelOrder()
+  const isPending = cancel.isPending
+
+  // Reset the inline error state every time the dialog
+  // opens so a prior failure doesn't carry over. Same
+  // pattern as FileComplaintDialog's reset effect.
+  useEffect(() => {
+    cancel.reset()
+  }, [cancel])
+
+  const errorMessage = describeError(
+    cancel.error,
+    "Could not cancel the order.",
+  )
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancel order #{orderId}?</DialogTitle>
+          <DialogDescription>
+            This will cancel your order and let the kitchen
+            know. You can place a new one anytime.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/*
+          Inline error slot. Same shape as the cart Sheet
+          footer and the other dialogs: role="alert" so the
+          change is announced, destructive/30 border +
+          destructive/5 background for the rose tint. The
+          dialog stays open so the user can read the message
+          and decide whether to retry.
+        */}
+        {errorMessage ? (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
+          >
+            <p className="text-sm text-destructive">{errorMessage}</p>
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={onClose}
+            disabled={isPending}
+          >
+            Keep order
+          </Button>
+          <Button
+            onClick={() =>
+              cancel.mutate(
+                { orderId },
+                { onSuccess: onCancelled },
+              )
+            }
+            disabled={isPending}
+            aria-busy={isPending}
+          >
+            {isPending ? (
+              <>
+                <Loader2 aria-hidden="true" className="animate-spin" />
+                Cancelling…
+              </>
+            ) : (
+              "Cancel order"
             )}
           </Button>
         </DialogFooter>
