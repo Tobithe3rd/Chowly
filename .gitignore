@@ -1,12 +1,15 @@
 # Tools / agent state
 .claude/
+graphify-out/
+
+# Next.js trace files written at the repo root (not under chowly-frontend/)
+/.next/
 
 # --- Backend (Python / FastAPI) --------------------------------------------
-chowly-backend/.env
+chowly-backend/.env*
 chowly-backend/venv/
 chowly-backend/.venv/
-chowly-backend/__pycache__/
-chowly-backend/app/__pycache__/
+**/__pycache__/
 *.pyc
 
 # --- Frontend (Next.js / Node) --------------------------------------------
