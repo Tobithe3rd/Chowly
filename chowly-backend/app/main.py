@@ -49,7 +49,10 @@ app = FastAPI(
 # friction-free; tighten if you add a production frontend.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allow_origins,
+    allow_origins=[
+        "http://localhost:3000",  # keep this for local dev
+        "https://chowly-frontend.onrender.com",  # your live frontend URL
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
