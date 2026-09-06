@@ -297,7 +297,7 @@ export function CartButton() {
                   ? "Your account is not linked to a restaurant."
                   : undefined
             }
-            className="w-full bg-amber-500 text-amber-950 hover:bg-amber-400 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
+            className="w-full bg-brand text-brand-foreground hover:bg-brand/90"
           >
             {placeOrder.isPending ? (
               <>

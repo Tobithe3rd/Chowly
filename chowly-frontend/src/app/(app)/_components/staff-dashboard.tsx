@@ -169,7 +169,7 @@ function ClaimedCell({
   const claimedBy = line[claimField]
   if (typeof claimedBy === "number" && claimedBy === userPid) {
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+      <span className="inline-flex items-center rounded-full bg-brand-soft px-2 py-0.5 text-xs font-semibold text-brand-soft-foreground dark:bg-brand-soft dark:text-brand-soft-foreground">
         Claimed by you
       </span>
     )
@@ -648,7 +648,7 @@ export function StaffDashboard({
     <div>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             {title}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>

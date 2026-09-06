@@ -60,7 +60,7 @@ Chowly's meaningfully different mechanism is *item-level* claim: a single order 
 ## Brand Commitments
 
 - **Name:** "Chowly." No other name has been requested. The wordmark is the brand.
-- **Voice:** distinct but warm. Memorable identity — a hint of color, a touch of personality in the wordmark and copy — but the underlying app still feels trustworthy and professional enough for a restaurant operator. No aggressive marketing voice; no jokes in error states; the warmth is in the wordmark and a single accent color, not in copy.
+- **Voice:** bold and vibrant. Cobalt-blue primary, citrus-yellow accent, a 32px dual-color brand mark, and a display-weight wordmark. The chrome carries the energy; the data on the cards still reads as a restaurant dashboard, not a marketing surface. The semantic status palette (sky/amber/emerald/rose for in-flight/warning/done/terminal) is locked and does not move with rebrand passes.
 - **Primary audience for design decisions:** the customer. Customer-facing tone carries through to staff dashboards. Staff dashboards do not become more utilitarian at the cost of customer warmth.
 - **No formal brand book yet.** No fixed palette, no committed typeface, no logo. Future work establishes these; init captures that they are open.
 

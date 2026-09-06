@@ -299,7 +299,7 @@ function ClaimedCell({
   // backend gap (see plan); do not silently invent a name.
   if (typeof order.waiter_id === "number" && order.waiter_id === userPid) {
     return (
-      <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+      <span className="inline-flex items-center rounded-full bg-brand-soft px-2 py-0.5 text-xs font-semibold text-brand-soft-foreground dark:bg-brand-soft dark:text-brand-soft-foreground">
         Claimed by you
       </span>
     )
@@ -501,8 +501,8 @@ function OrderRow({
       // text.
       className={
         muted
-          ? "cursor-pointer text-muted-foreground hover:bg-muted/40 focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-inset focus-visible:outline-none"
-          : "cursor-pointer hover:bg-muted/40 focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-inset focus-visible:outline-none dark:focus-visible:bg-amber-400/10 dark:focus-visible:ring-amber-400/40"
+          ? "cursor-pointer text-muted-foreground hover:bg-muted/40 focus-visible:bg-brand-soft focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset focus-visible:outline-none"
+          : "cursor-pointer hover:bg-muted/40 focus-visible:bg-brand-soft focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset focus-visible:outline-none dark:focus-visible:bg-brand-soft dark:focus-visible:ring-brand-soft-foreground/60"
       }
       data-status={order.status}
       role="link"
@@ -669,7 +669,7 @@ function WaiterDashboard() {
     <div>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             Orders
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>

@@ -31,20 +31,20 @@ import type { Role } from "@/types"
 // state and "you are here" navigation, never decoration. The role
 // badge IS the you-are-here signal, so this is the one place a
 // chromatic palette is correct. Each chip pairs a light tint and
-// dark tint so contrast holds in both themes. The 200/300 ring and
-// the 200 fill step the saturation up so the chip has presence in
-// the chrome without losing AA contrast.
+// dark tint so contrast holds in both themes. The 300 fill + 400
+// ring and the ring-2 step the saturation and weight up so the
+// chip has presence in the chrome without losing AA contrast.
 const ROLE_CHIP: Record<Role, string> = {
   customer:
-    "bg-amber-200 text-amber-900 ring-amber-300 dark:bg-amber-400/20 dark:text-amber-100 dark:ring-amber-400/40",
+    "bg-amber-300/90 text-amber-950 ring-amber-400 dark:bg-amber-400/30 dark:text-amber-50 dark:ring-amber-400/60",
   waiter:
-    "bg-sky-200 text-sky-900 ring-sky-300 dark:bg-sky-400/20 dark:text-sky-100 dark:ring-sky-400/40",
+    "bg-sky-300/90 text-sky-950 ring-sky-400 dark:bg-sky-400/30 dark:text-sky-50 dark:ring-sky-400/60",
   chef:
-    "bg-rose-200 text-rose-900 ring-rose-300 dark:bg-rose-400/20 dark:text-rose-100 dark:ring-rose-400/40",
+    "bg-rose-300/90 text-rose-950 ring-rose-400 dark:bg-rose-400/30 dark:text-rose-50 dark:ring-rose-400/60",
   bartender:
-    "bg-violet-200 text-violet-900 ring-violet-300 dark:bg-violet-400/20 dark:text-violet-100 dark:ring-violet-400/40",
+    "bg-violet-300/90 text-violet-950 ring-violet-400 dark:bg-violet-400/30 dark:text-violet-50 dark:ring-violet-400/60",
   admin:
-    "bg-emerald-200 text-emerald-900 ring-emerald-300 dark:bg-emerald-400/20 dark:text-emerald-100 dark:ring-emerald-400/40",
+    "bg-emerald-300/90 text-emerald-950 ring-emerald-400 dark:bg-emerald-400/30 dark:text-emerald-50 dark:ring-emerald-400/60",
 }
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -59,17 +59,17 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         visual work the card surface used to do.
       */}
       <header className="border-b border-border bg-background">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6 px-6">
+        <div className="mx-auto flex h-18 max-w-7xl items-center justify-between gap-6 px-6">
           <a
             href="/"
-            className="group flex items-center gap-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
+            className="group flex items-center gap-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
             aria-label="Chowly — go to home"
           >
             <span
               aria-hidden="true"
-              className="inline-block size-6 rounded-full bg-gradient-to-br from-amber-500 to-rose-500 shadow-[0_1px_3px_rgba(244,63,94,0.25),inset_0_-2px_4px_rgba(0,0,0,0.12)]"
+              className="inline-block size-8 rounded-full bg-gradient-to-br from-brand to-accent shadow-[0_2px_8px_rgba(28,73,210,0.35),inset_0_-3px_6px_rgba(0,0,0,0.18)] ring-2 ring-background/40"
             />
-            <span className="text-lg font-bold tracking-[-0.02em] text-foreground">
+            <span className="text-xl font-extrabold tracking-[-0.04em] text-foreground font-heading">
               Chowly
             </span>
           </a>
@@ -86,7 +86,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 className="hidden h-4 w-px bg-border sm:inline-block"
               />
               <Badge
-                className={`h-7 rounded-full px-2.5 text-xs font-semibold ring-1 ring-inset ${ROLE_CHIP[user.role]}`}
+                className={`h-7 rounded-full px-2.5 text-xs font-bold tracking-tight ring-2 ring-inset ${ROLE_CHIP[user.role]}`}
                 aria-label={`Role: ${user.role}`}
               >
                 {user.role}

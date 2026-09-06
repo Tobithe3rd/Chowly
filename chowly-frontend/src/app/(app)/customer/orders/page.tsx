@@ -109,7 +109,7 @@ function HeaderRule() {
   return (
     <div
       aria-hidden="true"
-      className="mt-4 h-px w-full bg-amber-200/70 dark:bg-amber-400/30"
+      className="mt-4 h-px w-full bg-brand/30 dark:bg-brand-soft"
     />
   )
 }
@@ -243,7 +243,7 @@ function CustomerOrdersDashboard() {
           go if they don't want to wait for the data.
         */}
         <header className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             My orders
           </h1>
           <Button variant="outline" size="sm" asChild>
@@ -269,7 +269,7 @@ function CustomerOrdersDashboard() {
           retry.
         */}
         <header className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             My orders
           </h1>
           <Button variant="outline" size="sm" asChild>
@@ -306,7 +306,7 @@ function CustomerOrdersDashboard() {
       */}
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             My orders
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
@@ -352,7 +352,7 @@ function CustomerOrdersDashboard() {
                       role="link"
                       tabIndex={0}
                       aria-label={`View order #${order.id}`}
-                      className="cursor-pointer hover:bg-muted/40 focus-visible:bg-amber-50 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-inset focus-visible:outline-none dark:focus-visible:bg-amber-400/10 dark:focus-visible:ring-amber-400/40"
+                      className="cursor-pointer hover:bg-muted/40 focus-visible:bg-brand-soft focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset focus-visible:outline-none dark:focus-visible:bg-brand-soft dark:focus-visible:ring-brand-soft-foreground/60"
                       onClick={navigate}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {

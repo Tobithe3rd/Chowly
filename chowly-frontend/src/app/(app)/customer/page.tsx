@@ -87,7 +87,7 @@ function HeaderRule() {
   return (
     <div
       aria-hidden="true"
-      className="mt-4 h-px w-full bg-amber-200/70 dark:bg-amber-400/30"
+      className="mt-4 h-px w-full bg-brand/30 dark:bg-brand-soft"
     />
   )
 }
@@ -96,7 +96,7 @@ function SectionRule() {
   return (
     <div
       aria-hidden="true"
-      className="mt-3 h-px w-16 bg-amber-300/80 dark:bg-amber-400/40"
+      className="mt-3 h-px w-16 bg-brand dark:bg-brand-soft-foreground/60"
     />
   )
 }
@@ -114,7 +114,7 @@ function CartControls({ item }: { item: MenuItemRead }) {
   if (line) {
     return (
       <div
-        className="inline-flex h-7 items-center rounded-md border border-amber-300 bg-background dark:border-amber-400/40"
+        className="inline-flex h-7 items-center rounded-md border border-brand bg-background dark:border-brand-soft-foreground/40"
         role="group"
         aria-label={`Adjust quantity of ${item.name}`}
       >
@@ -150,7 +150,7 @@ function CartControls({ item }: { item: MenuItemRead }) {
       size="sm"
       onClick={() => cart.addItem(item, 1)}
       aria-label={`Add ${item.name} to cart`}
-      className="border-amber-300 text-amber-900 hover:bg-amber-100 hover:text-amber-950 dark:border-amber-400/40 dark:text-amber-100 dark:hover:bg-amber-400/20"
+      className="border-brand text-brand-soft-foreground hover:bg-brand-soft hover:text-brand dark:border-brand-soft-foreground/40 dark:text-brand-soft-foreground dark:hover:bg-brand-soft/40"
     >
       <ShoppingBag aria-hidden="true" />
       Add
@@ -175,7 +175,7 @@ function MenuItemRow({ item }: { item: MenuItemRead }) {
         // not lift: they're informational, not interactive.
         "transition-all duration-150 ease-out " +
         (available
-          ? "hover:-translate-y-0.5 hover:ring-2 hover:ring-amber-300 hover:shadow-md dark:hover:ring-amber-400/50"
+          ? "hover:-translate-y-0.5 hover:ring-2 hover:ring-brand hover:shadow-md dark:hover:ring-brand-soft-foreground/60"
           : "opacity-90")
       }
     >
@@ -211,7 +211,7 @@ function MenuItemRow({ item }: { item: MenuItemRead }) {
               variant="outline"
               className={
                 available
-                  ? "ring-1 ring-inset ring-amber-200/70 text-amber-900 dark:text-amber-200 dark:ring-amber-400/30"
+                  ? "ring-1 ring-inset ring-brand/40 text-brand-soft-foreground dark:text-brand-soft-foreground dark:ring-brand-soft-foreground/40"
                   : undefined
               }
             >
@@ -343,7 +343,7 @@ function CustomerDashboard() {
   if (restaurantId === undefined) {
     return (
       <div className="mt-10 rounded-lg border border-border bg-card p-6">
-        <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+        <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
           Your account isn’t linked to a restaurant yet
         </h1>
         <HeaderRule />
@@ -367,7 +367,7 @@ function CustomerDashboard() {
         </>
       ) : query.isError ? (
         <>
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             Menu
           </h1>
           <HeaderRule />
@@ -376,7 +376,7 @@ function CustomerDashboard() {
       ) : query.data ? (
         <>
           <header>
-            <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+            <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
               {query.data.name}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">

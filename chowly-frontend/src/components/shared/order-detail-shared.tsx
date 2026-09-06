@@ -93,7 +93,7 @@ export function HeaderRule() {
   return (
     <div
       aria-hidden="true"
-      className="mt-4 h-px w-full bg-amber-200/70 dark:bg-amber-400/30"
+      className="mt-4 h-px w-full bg-brand/30 dark:bg-brand-soft"
     />
   )
 }
@@ -296,7 +296,7 @@ export function ErrorState({
 export function InvalidIdState({ backHref }: { backHref: string }) {
   return (
     <div className="mt-10 rounded-lg border border-border bg-card p-6">
-      <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+      <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
         That order link is invalid
       </h1>
       <HeaderRule />

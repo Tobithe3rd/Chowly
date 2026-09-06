@@ -399,7 +399,7 @@ function ComplaintRow({
         <Link
           href={`/admin/orders/${complaint.order_id}`}
           aria-label={`View order #${complaint.order_id} details`}
-          className="text-foreground outline-none hover:text-amber-700 hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:hover:text-amber-300"
+          className="text-foreground outline-none hover:text-brand-soft-foreground hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:hover:text-brand-soft-foreground"
         >
           #{complaint.order_id}
         </Link>
@@ -682,7 +682,7 @@ function RecentOrdersAdmin() {
                       <Link
                         href={`/admin/orders/${o.id}`}
                         aria-label={`View order #${o.id} details`}
-                        className="text-foreground outline-none hover:text-amber-700 hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:hover:text-amber-300"
+                        className="text-foreground outline-none hover:text-brand-soft-foreground hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:hover:text-brand-soft-foreground"
                       >
                         #{o.id}
                       </Link>
@@ -831,7 +831,7 @@ function MenuItemsAdmin() {
     <div>
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             Menu items
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">

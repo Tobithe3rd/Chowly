@@ -145,7 +145,7 @@ function OrderView({ order }: { order: OrderRead }) {
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
           <Link
             href="/admin"
-            className="text-sm font-medium text-amber-700 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:text-amber-300"
+            className="text-sm font-medium text-brand-soft-foreground outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:text-brand-soft-foreground"
           >
             ← Back to admin
           </Link>
@@ -158,7 +158,7 @@ function OrderView({ order }: { order: OrderRead }) {
     <>
       <header aria-live="polite">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+          <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
             Order #{order.id}
           </h1>
           <OrderStatusBadge status={order.status} />
@@ -190,7 +190,7 @@ function OrderView({ order }: { order: OrderRead }) {
             <div className="flex items-start gap-2">
               <Clock
                 aria-hidden="true"
-                className="mt-0.5 size-4 text-amber-700 dark:text-amber-300"
+                className="mt-0.5 size-4 text-brand-soft-foreground dark:text-brand-soft-foreground"
               />
               <div>
                 <CardTitle>Estimated wait</CardTitle>
@@ -207,7 +207,7 @@ function OrderView({ order }: { order: OrderRead }) {
             <div className="flex items-start gap-2">
               <Receipt
                 aria-hidden="true"
-                className="mt-0.5 size-4 text-amber-700 dark:text-amber-300"
+                className="mt-0.5 size-4 text-brand-soft-foreground dark:text-brand-soft-foreground"
               />
               <div>
                 <CardTitle>Placed</CardTitle>
@@ -285,7 +285,7 @@ function OrderView({ order }: { order: OrderRead }) {
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <Link
           href="/admin"
-          className="text-sm font-medium text-amber-700 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:text-amber-300"
+          className="text-sm font-medium text-brand-soft-foreground outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:text-brand-soft-foreground"
         >
           ← Back to admin
         </Link>
@@ -318,7 +318,7 @@ function OrderDashboard() {
   if (query.isError) {
     return (
       <>
-        <h1 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+        <h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground sm:text-4xl">
           Order
         </h1>
         <HeaderRule />
