@@ -51,7 +51,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # keep this for local dev
-        "https://chowly-frontend.onrender.com",  # your live frontend URL
+        "https://chowly-1.onrender.com",  # your live frontend URL
     ],
     allow_credentials=False,
     allow_methods=["*"],
