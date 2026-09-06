@@ -19,7 +19,7 @@
 import { ApiError } from "./api-error"
 import { clearToken, getToken } from "./token"
 
-const DEFAULT_BASE_URL = "http://localhost:8000"
+const DEFAULT_BASE_URL = "https://chowly-w8xu.onrender.com"
 
 function getBaseUrl(): string {
   // NEXT_PUBLIC_* vars are inlined at build time, so a missing value
