@@ -1,59 +1,59 @@
 "use client"
 
 /**
- * /waiter/orders/[orderId] — the waiter's order detail page.
+ * /admin/orders/[orderId] — the admin's order detail page.
  *
- * The single-action row on /waiter is a fast scan lane — one
- * button at a time, mutually exclusive by state. This page is
- * the *full-control* sibling: when a waiter wants to see the
- * whole order and apply the right action, they come here.
+ * A manager review surface. Mirrors the waiter's detail page
+ * (header + stepper + estimated-wait + items card with action
+ * group + back link) with three role-driven differences:
  *
- * Reuse vs the admin detail page: ~90% of the body is
- * shared. The shape (header + stepper + estimated-wait + items
- * + back link) is identical, with three role-driven changes:
- *
- *   1. RouteGuard: allowedRoles={["waiter"]} instead of
- *      {["admin"]}. Same one-line shape, no special-casing.
- *   2. Header retarget: H1 is "Order #N" (not "Order #N —
- *      managed by admin"), the back link is "Back to all
- *      orders" pointing to /waiter (not /admin), and the
- *      "Managed by {name}" subline references a waiter rather
- *      than a manager review posture.
- *   3. Action group: ActionGroup (from components/shared/
- *      order-detail-shared.tsx) is invoked with isAdmin
- *      omitted (default false), so the Served button respects
- *      the all_lines_ready gate. The admin detail page passes
- *      isAdmin={true} and bypasses that gate — the backend
- *      (routers/orders.py:204-216) permits the override; the
- *      button just reflects it.
+ *   1. RouteGuard: allowedRoles={["admin"]} instead of
+ *      {["waiter"]}. Same one-line shape, no special-casing.
+ *      A non-admin who lands here is bounced to their own
+ *      home via getRoleHome(user.role).
+ *   2. Header retarget: the subline reads as a manager review
+ *      ("Admin review · managed by {name}" or "Admin review ·
+ *      unclaimed") rather than the waiter's "You are managing
+ *      this order / Managed by {name}". The admin doesn't
+ *      claim orders from this page; this view is for reading
+ *      + acting on the Served override.
+ *   3. ActionGroup: passed isAdmin={true}. The Mark-served
+ *      button's predicate relaxes from "all_lines_ready +
+ *      claimed-by-me + non-terminal" to just "non-terminal" —
+ *      the backend (routers/orders.py:204-216) lets an admin
+ *      PATCH status=Served even when all_lines_ready is false,
+ *      so the button reflects that. Claim and Mark-delayed
+ *      stay conservative (admin doesn't claim orders from
+ *      here; admin's reassign-waiter flow is its own future
+ *      step).
  *
  * The shared body helpers (OrderLineRow, LinesProgressSummary,
  * CancelledCard, OrderSkeleton, ErrorState, InvalidIdState,
  * OrderComplaintBadge, ActionGroup, formatPrice, formatOrderDate,
  * HeaderRule) live in components/shared/order-detail-shared.tsx
- * and are imported here and on the admin detail page. The
- * customer detail page has its own customer-flavored variants
- * and does not consume the shared module.
+ * — same import surface as the waiter page. The customer detail
+ * page is intentionally customer-flavored and does not consume
+ * the shared module.
  *
  * Data flow: useOrder(orderId) → GET /orders/{id}, which the
- * backend already admits staff at the same restaurant
- * (routers/orders.py:482-508). Same hook, same shape as the
- * admin page; the page just reads more off the response
- * (waiter_id, all_lines_ready) to drive the action group.
+ * backend admits admin tenant-scoped (routers/orders.py:489-508:
+ * the `else: tenant-scoped` branch under get_order). Same hook,
+ * same shape as the waiter page; this page just reads more
+ * (waiter_id, all_lines_ready, cancelled_by_*) to surface the
+ * audit-trail copy and to drive the admin's Served override.
  *
- * Sort/polling: useOrder polls every 25s with a terminal-pause,
- * so a live order's status flips within one tick. The list
- * page polls at 10s; the detail page doesn't need that cadence
- * because the action is a deliberate step, not a passive
- * observation. After a mutation, the same hook invalidates
- * ["order", id] and the 25s poll picks up the new state — or
- * an explicit refetch via the page's "Try again" if the user
- * is impatient.
+ * Polling: useOrder polls every 25s with a terminal-pause,
+ * same as the waiter page. After a Mark-served mutation the
+ * button's onSuccess invalidates ["order", id] and the 25s
+ * poll picks up the new state — or an explicit refetch via
+ * "Try again" if the admin is impatient.
  */
 
 import { useMemo } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
+import { Clock, Receipt } from "lucide-react"
 
 import {
   ActionGroup,
@@ -82,8 +82,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { useQueryClient } from "@tanstack/react-query"
-import { Clock, Receipt } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { useOrder } from "@/hooks/use-order"
 import type { OrderRead } from "@/types"
@@ -107,9 +105,12 @@ function OrderView({ order }: { order: OrderRead }) {
       [order.waiter_id, order.all_lines_ready, order.status],
     )
 
-  // Cancelled short-circuit — same shape as the customer page.
-  // No action group (the order is over); the items card and
-  // back link render as they do on the live branch.
+  // Cancelled short-circuit — same shape as the waiter and
+  // customer pages. No action group (the order is over); the
+  // items card and back link render as they do on the live
+  // branch. The CancelledCard's "Cancelled by {name} · {time}"
+  // copy is the audit-trail signal — when an admin lands on a
+  // cancelled order, they should see who closed it.
   if (order.status === "Cancelled") {
     return (
       <>
@@ -143,10 +144,10 @@ function OrderView({ order }: { order: OrderRead }) {
         </Card>
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
           <Link
-            href="/waiter"
+            href="/admin"
             className="text-sm font-medium text-amber-700 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:text-amber-300"
           >
-            ← Back to all orders
+            ← Back to admin
           </Link>
         </div>
       </>
@@ -164,11 +165,9 @@ function OrderView({ order }: { order: OrderRead }) {
           <OrderComplaintBadge orderId={order.id} />
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {order.waiter_id === userPid
-            ? "You are managing this order."
-            : order.waiter_id !== null
-              ? `Managed by ${order.waiter_name ?? `waiter #${order.waiter_id}`}.`
-              : "Unclaimed — claim it below to take ownership."}
+          {order.waiter_id !== null
+            ? `Admin review · managed by ${order.waiter_name ?? `waiter #${order.waiter_id}`}.`
+            : "Admin review · unclaimed."}
         </p>
         <HeaderRule />
       </header>
@@ -225,14 +224,13 @@ function OrderView({ order }: { order: OrderRead }) {
         Items card with the action group in the header. The
         action group sits in the top-right so the card's body
         (line list + total) reads as the data, and the actions
-        are the chrome — the opposite of the customer page,
-        where the card body is the only thing.
+        are the chrome.
 
-        isAdmin is omitted (default false), so the Served
-        button respects the all_lines_ready gate. The admin
-        detail page passes isAdmin={true} to bypass that gate;
-        the backend (routers/orders.py:204-216) permits the
-        override.
+        isAdmin={true}: the Mark-served predicate relaxes to
+        "non-terminal only" (the backend allows admin to
+        override all_lines_ready at routers/orders.py:204-216).
+        Claim and Mark-delayed stay conservative; admin's
+        reassign-waiter flow is a future step.
       */}
       <Card size="sm" className="mt-3">
         <CardHeader>
@@ -251,6 +249,7 @@ function OrderView({ order }: { order: OrderRead }) {
               order={order}
               userPid={userPid}
               queryClient={queryClient}
+              isAdmin
             />
           </div>
         </CardHeader>
@@ -278,18 +277,17 @@ function OrderView({ order }: { order: OrderRead }) {
       </Card>
 
       {/*
-        Back link to /waiter. The list page is the natural
-        sibling — waiters navigate back to the operational
-        dashboard after handling a single order, not to a
-        separate "my orders" history (the list IS the
-        history; the page title there is "Orders").
+        Back link to /admin. The admin's home is where the
+        complaints list and recent-orders section live; the
+        detail page is the drill-in sibling, not a separate
+        history.
       */}
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <Link
-          href="/waiter"
+          href="/admin"
           className="text-sm font-medium text-amber-700 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:text-amber-300"
         >
-          ← Back to all orders
+          ← Back to admin
         </Link>
         <p className="text-xs text-muted-foreground">
           {order.customer_name}
@@ -310,7 +308,7 @@ function OrderDashboard() {
   const query = useOrder(orderId)
 
   if (orderId === undefined) {
-    return <InvalidIdState backHref="/waiter" />
+    return <InvalidIdState backHref="/admin" />
   }
 
   if (query.isPending) {
@@ -336,9 +334,9 @@ function OrderDashboard() {
   return <OrderView order={query.data} />
 }
 
-export default function WaiterOrderPage() {
+export default function AdminOrderPage() {
   return (
-    <RouteGuard allowedRoles={["waiter"]}>
+    <RouteGuard allowedRoles={["admin"]}>
       <OrderDashboard />
     </RouteGuard>
   )

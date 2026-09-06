@@ -339,9 +339,9 @@ def update_menu_item(
         "filter accepts 'Open' or 'Resolved'. Staff (waiter/chef/"
         "bartender) and admin at the same restaurant are admitted; "
         "customers are rejected. The response shape is the same "
-        "ComplaintRead used on the per-order read; no customer-name "
-        "join (mirrors the customer_id-as-placeholder gap flagged on "
-        "the order read — fix in a later step)."
+        "ComplaintRead used on the per-order read, including the "
+        "joined `customer_name` so the admin list surfaces the "
+        "filer instead of a `#N` placeholder."
     ),
 )
 def list_restaurant_complaints(
@@ -368,13 +368,19 @@ def list_restaurant_complaints(
     # Tenant-scope filter: join through Order.restaurant_id. The
     # join is the load-bearing filter (a Complaint.order_id is always
     # set, but defense-in-depth — a future data migration could
-    # orphan a row).
+    # orphan a row). The selectinload on Complaint.customer pulls
+    # all complaint-customer rows in one extra IN-query so the
+    # ComplaintRead.customer_name walk is purely in-memory — a
+    # list of 200 complaints with 200 separate lazy SELECTs would
+    # be the classic N+1, and a selectinload here costs the same
+    # one extra round-trip as a 1-row read.
     stmt = (
         select(Complaint)
         .join(Order, Order.id == Complaint.order_id)
         .where(Order.restaurant_id == restaurant_id)
         .order_by(Complaint.complaint_date.desc())
         .limit(200)
+        .options(selectinload(Complaint.customer))
     )
     if status_filter is not None:
         stmt = stmt.where(Complaint.status == status_filter)

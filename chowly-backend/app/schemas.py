@@ -288,6 +288,20 @@ class OrderItemRead(BaseModel):
     subtotal: Decimal
     chef_id: Optional[int]
     bartender_id: Optional[int]
+    # Joined display names from the Chef / Bartender profile rows
+    # pointed at by chef_id / bartender_id. The relationships
+    # (`line.chef`, `line.bartender`) are eager-loaded by
+    # _load_order_with_items alongside the existing menu_item
+    # chain, so the @model_validator below walks them at
+    # model_validate time without triggering a lazy load per
+    # row. Surfacing the names on the wire lets the chef/
+    # bartender dashboard render "Claimed by Alex Chen" instead
+    # of the previous generic "Claimed" (the same gap was
+    # flagged on the staff-dashboard component). Both are
+    # nullable because an unclaimed line has no claimer row
+    # to resolve.
+    chef_name: Optional[str] = None
+    bartender_name: Optional[str] = None
     # Per-line preparation state. Default is "Preparing" (set by
     # the migration's server_default and by create_order explicitly
     # on insert). Chefs/bartenders flip this to "Ready" via
@@ -297,29 +311,42 @@ class OrderItemRead(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _resolve_menu_item_fields(cls, values: Any) -> Any:
-        # Dicts that already have menu_item_name (and item_type)
-        # pass through. This keeps manual construction and tests
-        # ergonomic.
+    def _resolve_joined_fields(cls, values: Any) -> Any:
+        # Dicts that already have menu_item_name (and item_type,
+        # chef_name, bartender_name) pass through. This keeps
+        # manual construction and tests ergonomic.
         if isinstance(values, dict):
             return values
-        # ORM object: read menu_item_name AND item_type from the
-        # joined MenuItem via the relationship that
-        # _load_order_with_items eager-loaded. Both are needed
-        # because Pydantic's from_attributes only walks single-
-        # level attributes — it would look for `menu_item_name`
-        # and `item_type` on OrderItem and fail.
+        # ORM object: read the joined fields from the eager-
+        # loaded relationships. Pydantic's from_attributes only
+        # walks single-level attributes — it would look for
+        # `menu_item_name`, `item_type`, `chef_name`, and
+        # `bartender_name` on OrderItem and fail. Walking each
+        # relationship by hand keeps the wire shape flat (no
+        # nested DTO) and matches the convention already used
+        # for `menu_item_name` / `item_type`.
         menu_item = getattr(values, "menu_item", None)
         menu_item_name = getattr(menu_item, "name", None)
         item_type = getattr(menu_item, "item_type", None)
-        # from_attributes will read the rest by name. Merge the
-        # resolved fields on top so they win.
+        chef = getattr(values, "chef", None)
+        chef_name = getattr(chef, "name", None)
+        bartender = getattr(values, "bartender", None)
+        bartender_name = getattr(bartender, "name", None)
         if hasattr(values, "__dict__"):
-            merged = {**values.__dict__, "menu_item_name": menu_item_name}
+            merged = {
+                **values.__dict__,
+                "menu_item_name": menu_item_name,
+                "chef_name": chef_name,
+                "bartender_name": bartender_name,
+            }
             if item_type is not None:
                 merged["item_type"] = item_type
             return merged
-        out: dict = {"menu_item_name": menu_item_name}
+        out: dict = {
+            "menu_item_name": menu_item_name,
+            "chef_name": chef_name,
+            "bartender_name": bartender_name,
+        }
         if item_type is not None:
             out["item_type"] = item_type
         return out
@@ -337,6 +364,34 @@ class OrderRead(BaseModel):
     restaurant_id: int
     waiter_id: Optional[int]
     items: list[OrderItemRead] = Field(default_factory=list)
+    # Joined display names. `customer` is always present (the FK
+    # is NOT NULL on Order), so customer_name is required.
+    # `waiter` is null until a waiter claims the order via
+    # PATCH /orders/{id}, so waiter_name is Optional and falls
+    # back to null on unclaimed orders. Both relationships are
+    # eager-loaded by _load_order_with_items via selectinload,
+    # so the @model_validator below walks them at
+    # model_validate time without a per-row lazy load. The
+    # frontend uses these to drop the "Customer #N" /
+    # "Claimed by waiter #N" placeholders from the list and
+    # detail pages.
+    customer_name: str
+    waiter_name: Optional[str] = None
+    # Cancellation attribution. All three stay null until the
+    # order's status flips to CANCELLED; the same write that
+    # sets the status (in routers/orders.py:update_order) sets
+    # cancelled_by_user_id and cancelled_at, so the three are
+    # populated together. cancelled_at is the DB's func.now()
+    # at the moment of the write (same clock the 10-minute
+    # cancel-window check uses, so the window math and the
+    # attribution timestamp are on the same source of truth).
+    # The cancelled_by_user relationship is one-way (see the
+    # note on the Order model) and is eager-loaded by
+    # _load_order_with_items; cancelled_by_name is null on
+    # non-cancelled orders.
+    cancelled_by_user_id: Optional[int] = None
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_name: Optional[str] = None
     # Derived: true iff the order has at least one item AND every
     # item's status is "Ready". Computed by the router (see
     # _compute_all_lines_ready in routers/orders.py) so the value
@@ -346,6 +401,62 @@ class OrderRead(BaseModel):
     # code path from accidentally reading a vacuous "all ready"
     # for an empty order.
     all_lines_ready: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_joined_fields(cls, values: Any) -> Any:
+        # Dicts that already have the joined names pass through
+        # — keeps manual construction and tests ergonomic. Same
+        # shape as OrderItemRead._resolve_joined_fields; the two
+        # resolvers don't share a base class because the joined
+        # relationship set is different (Customer/Waiter/User
+        # here, MenuItem/Chef/Bartender there).
+        if isinstance(values, dict):
+            return values
+        customer = getattr(values, "customer", None)
+        customer_name = getattr(customer, "name", None)
+        waiter = getattr(values, "waiter", None)
+        waiter_name = getattr(waiter, "name", None)
+        # The cancelling actor is a User (auth record), not a
+        # profile row — the User model itself has no `name`
+        # field. Walk from User -> the matching profile based
+        # on role, since every role that can cancel (customer
+        # or staff) has a corresponding profile table with a
+        # `name` column. Admin is the only role without a
+        # profile, so an admin-cancel falls back to the user's
+        # email as the display string — honest (it's the only
+        # identifier on the User row) and not a blank cell.
+        cancelled_by_user = getattr(values, "cancelled_by_user", None)
+        cancelled_by_name: Optional[str] = None
+        if cancelled_by_user is not None:
+            role = getattr(cancelled_by_user, "role", None)
+            profile = (
+                getattr(cancelled_by_user, "customer_profile", None)
+                or getattr(cancelled_by_user, "waiter_profile", None)
+                or getattr(cancelled_by_user, "chef_profile", None)
+                or getattr(cancelled_by_user, "bartender_profile", None)
+            )
+            if profile is not None:
+                cancelled_by_name = getattr(profile, "name", None)
+            elif role is not None and str(role.value) == "admin":
+                cancelled_by_name = getattr(cancelled_by_user, "email", None)
+        # `cancelled_at` is a real column on Order, so
+        # from_attributes reads it directly. The only reason
+        # it's listed in the resolver is to keep all the
+        # cancellation fields in one place for review.
+        if hasattr(values, "__dict__"):
+            merged = {
+                **values.__dict__,
+                "customer_name": customer_name,
+                "waiter_name": waiter_name,
+                "cancelled_by_name": cancelled_by_name,
+            }
+            return merged
+        return {
+            "customer_name": customer_name,
+            "waiter_name": waiter_name,
+            "cancelled_by_name": cancelled_by_name,
+        }
 
 
 class OrderItemCreate(BaseModel):
@@ -415,29 +526,53 @@ class OrderItemClaimResponse(BaseModel):
     subtotal: Decimal
     chef_id: Optional[int]
     bartender_id: Optional[int]
+    # Mirrors OrderItemRead.chef_name / bartender_name — same
+    # rationale, same eager-load. The claim response is the
+    # one mutation path that flips chef_id/bartender_id from
+    # null to a real id, so the resolver walks the same
+    # relationships that the read shape does. The chef/
+    # bartender who just claimed the line sees their own name
+    # back (the staff_dashboard "Claimed by you" branch
+    # already keys off chef_id/bartender_id, so this is
+    # belt-and-suspenders for the claim endpoint specifically).
+    chef_name: Optional[str] = None
+    bartender_name: Optional[str] = None
     # Mirrors OrderItemRead.status — included so the claim response
     # surface stays consistent with the read shape. A chef who
     # claims a line gets the current status back in the same
     # payload, with no extra fetch. Pydantic's from_attributes reads
     # this directly off the ORM line; no @model_validator work is
-    # needed for this field (only the joined menu_item fields need
-    # the resolver).
+    # needed for this field (only the joined fields need the
+    # resolver).
     status: OrderItemStatus
 
     @model_validator(mode="before")
     @classmethod
-    def _resolve_menu_item_fields(cls, values: Any) -> Any:
+    def _resolve_joined_fields(cls, values: Any) -> Any:
         if isinstance(values, dict):
             return values
         menu_item = getattr(values, "menu_item", None)
         menu_item_name = getattr(menu_item, "name", None)
         item_type = getattr(menu_item, "item_type", None)
+        chef = getattr(values, "chef", None)
+        chef_name = getattr(chef, "name", None)
+        bartender = getattr(values, "bartender", None)
+        bartender_name = getattr(bartender, "name", None)
         if hasattr(values, "__dict__"):
-            merged = {**values.__dict__, "menu_item_name": menu_item_name}
+            merged = {
+                **values.__dict__,
+                "menu_item_name": menu_item_name,
+                "chef_name": chef_name,
+                "bartender_name": bartender_name,
+            }
             if item_type is not None:
                 merged["item_type"] = item_type
             return merged
-        out: dict = {"menu_item_name": menu_item_name}
+        out: dict = {
+            "menu_item_name": menu_item_name,
+            "chef_name": chef_name,
+            "bartender_name": bartender_name,
+        }
         if item_type is not None:
             out["item_type"] = item_type
         return out
@@ -468,6 +603,29 @@ class ComplaintRead(BaseModel):
     status: ComplaintStatus
     order_id: int
     customer_id: int
+    # Joined display name from the Customer profile row that
+    # owns this complaint. The Customer FK is NOT NULL on
+    # Complaint (every complaint is filed by the order's owning
+    # customer), so customer_name is required. The relationship
+    # is eager-loaded by both `get_complaint` (feedback.py) and
+    # `list_restaurant_complaints` (restaurants.py); the
+    # @model_validator below walks `complaint.customer.name` at
+    # model_validate time. Pydantic's from_attributes would
+    # otherwise look for a real `customer_name` attribute on the
+    # Complaint ORM row and raise a validation error — same
+    # joined-field pattern as OrderRead.customer_name.
+    customer_name: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_customer_name(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            return values
+        customer = getattr(values, "customer", None)
+        customer_name = getattr(customer, "name", None)
+        if hasattr(values, "__dict__"):
+            return {**values.__dict__, "customer_name": customer_name}
+        return {"customer_name": customer_name}
 
 
 class ComplaintCreate(BaseModel):

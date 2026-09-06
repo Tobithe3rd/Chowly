@@ -28,6 +28,13 @@ export interface ComplaintRead {
   status: ComplaintStatus
   order_id: number
   customer_id: number
+  // Joined display name from the Customer profile row that
+  // filed the complaint. The FK is NOT NULL on Complaint
+  // (every complaint is filed by the order's owning customer),
+  // so this is required. The admin complaints list reads
+  // this to drop the "#N" placeholder that used to be the
+  // only signal.
+  customer_name: string
 }
 
 /**

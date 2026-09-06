@@ -27,9 +27,12 @@
  *     transition in one step (and, if unclaimed, also claims
  *     the line — the backend allows claim-by-marking-ready).
  *   - line.status === "Preparing" and claimed by another
- *     staff member: a generic "Claimed" indicator. The
- *     per-line PATCH gate would 403 any Mark ready attempt
- *     from the wrong user, so we don't render a button.
+ *     staff member: a "Claimed by {name}" indicator with the
+ *     other staff member's display name (joined via
+ *     OrderItem.chef / OrderItem.bartender, populated in
+ *     `_load_order_with_items`). The per-line PATCH gate
+ *     would 403 any Mark ready attempt from the wrong user,
+ *     so we don't render a button.
  *
  * Both buttons open a small Dialog that confirms the action;
  * on success, the next 10s poll picks up the new state and
@@ -37,14 +40,6 @@
  * error (no toast) — the dialog stays open on failure so
  * the user can retry without losing context. Same pattern
  * as the cart Sheet and the waiter page's claim dialog.
- *
- * Known gap: there's no `chef: ChefRead | null` or
- * `bartender: BartenderRead | null` join on OrderItemRead, so
- * "claimed by another staff member" can only render as the
- * generic "Claimed" — no other-person name. To fix, add a
- * `selectinload(OrderItem.chef)` and
- * `selectinload(OrderItem.bartender)` in
- * `_load_order_with_items` and surface the joined names.
  */
 
 import { useEffect, useMemo, useState } from "react"
@@ -162,12 +157,15 @@ function ClaimedCell({
   userPid: number | undefined
 }) {
   // Compare the relevant claim-id field (chef_id or bartender_id
-  // depending on the view) to the JWT's pid (added in the
-  // previous step). When they match, the line is yours; when
-  // they don't, it's some other staff member. The backend
-  // doesn't currently return the claimer's name on
-  // OrderItemRead, so the non-self case is a generic "Claimed"
-  // — flagged in the plan as a backend gap, not faked here.
+  // depending on the view) to the JWT's pid. When they match,
+  // the line is yours; when they don't, it's some other staff
+  // member — and the joined name (chef_name / bartender_name)
+  // surfaces who. The "by you" branch keeps the amber pill
+  // for self-consistency with the rest of the staff UI; the
+  // "by another" branch shows the actual name. A null name
+  // (defense — should not happen given the FK, but the type
+  // is `| null`) falls back to the bare id so the operator
+  // can still tell two concurrent claims apart.
   const claimedBy = line[claimField]
   if (typeof claimedBy === "number" && claimedBy === userPid) {
     return (
@@ -176,7 +174,12 @@ function ClaimedCell({
       </span>
     )
   }
-  return <span className="text-sm text-muted-foreground">Claimed</span>
+  const otherName = claimField === "chef_id" ? line.chef_name : line.bartender_name
+  return (
+    <span className="text-sm text-muted-foreground">
+      Claimed by {otherName ?? `#${claimedBy}`}
+    </span>
+  )
 }
 
 /**

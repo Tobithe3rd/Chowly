@@ -39,10 +39,12 @@
  */
 
 import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import { useQueryClient } from "@tanstack/react-query"
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { ComplaintStatusBadge } from "@/components/shared/complaint-status-badge"
+import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { RouteGuard } from "@/components/shared/route-guard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -76,6 +78,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/hooks/use-auth"
 import { useCreateMenuItem } from "@/hooks/use-create-menu-item"
 import { useRestaurant } from "@/hooks/use-restaurant"
+import { useOrders } from "@/hooks/use-orders"
 import { useRestaurantComplaints } from "@/hooks/use-restaurant-complaints"
 import { useResolveComplaint } from "@/hooks/use-resolve-complaint"
 import {
@@ -90,31 +93,42 @@ import type {
   ItemType,
   MenuItemRead,
   MenuItemCreate,
+  OrderRead,
 } from "@/types"
 
 // --- Page -----------------------------------------------------------------
 
 /**
- * AdminPage — the admin's two-section landing surface.
+ * AdminPage — the admin's three-section landing surface.
  *
- * Two sections, both tenant-scoped to the admin's restaurant:
+ * Three sections, all tenant-scoped to the admin's restaurant:
  *   1. Complaints (above) — read-only list with a Resolve action
- *      on Open rows. Mirrors the menu-items table's "skeleton /
- *      error / empty" pattern. Driven by useRestaurantComplaints +
- *      useResolveComplaint.
- *   2. Menu items (below) — unchanged from the previous step.
+ *      on Open rows. The #N cell now links into the new admin
+ *      order detail page (src/app/(app)/admin/orders/[orderId]/
+ *      page.tsx) so an admin can drill from "someone filed a
+ *      complaint on order #N" straight to the full order view.
+ *      Mirrors the menu-items table's "skeleton / error / empty"
+ *      pattern. Driven by useRestaurantComplaints + useResolveComplaint.
+ *   2. Recent orders (middle) — the latest 10 orders at the
+ *      admin's restaurant, with links to the order detail
+ *      page. Lets the admin reach orders that have no
+ *      complaint (the "I just want to look" path, as opposed
+ *      to the complaint-driven drill-in from section 1).
+ *      Driven by useOrders (the same hook the waiter page
+ *      uses, tenant-scoped to the admin via the JWT).
+ *   3. Menu items (below) — unchanged from the previous step.
  *
- * The split is intentional: complaints are an operational signal
- * (someone flagged a problem at this restaurant), so an admin
- * opening /admin should see them first. The menu-items CRUD
- * surface is the bulk of the page; the complaints are the
- * smaller, time-sensitive header.
+ * The ordering is intentional: complaints are the most
+ * time-sensitive ("act now" signal), recent orders are the
+ * operational context, and the menu-items CRUD surface is the
+ * bulk of the page but the least time-sensitive.
  */
 export default function AdminPage() {
   return (
     <RouteGuard allowedRoles={["admin"]}>
       <div className="space-y-12">
         <ComplaintsAdmin />
+        <RecentOrdersAdmin />
         <MenuItemsAdmin />
       </div>
     </RouteGuard>
@@ -134,12 +148,15 @@ const CURRENCY = new Intl.NumberFormat(undefined, {
   currency: "USD",
 })
 
-function formatPrice(amount: string): string {
-  // `amount` is a stringified Decimal from Pydantic (e.g. "12.50").
-  // Coerce to number for display; for a demo we accept the float
-  // precision loss rather than reimplementing Decimal formatting.
+function formatPrice(amount: string | number): string {
+  // `amount` is sometimes a stringified Decimal from Pydantic
+  // (menu item prices, e.g. "12.50") and sometimes a number
+  // (OrderRead.total_amount, which Pydantic serializes as a
+  // plain JSON number). Coerce either way to number for
+  // display; for a demo we accept the float precision loss
+  // rather than reimplementing Decimal formatting.
   const n = Number(amount)
-  return Number.isFinite(n) ? CURRENCY.format(n) : amount
+  return Number.isFinite(n) ? CURRENCY.format(n) : String(amount)
 }
 
 // `complaint_date` is an ISO 8601 datetime from the backend (stored
@@ -151,6 +168,20 @@ function formatComplaintDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(d)
+}
+
+// "Placed" timestamp on the recent-orders table. The customer
+// page and the order detail page use the same medium-date +
+// short-time format. Reusing the same idiom keeps the
+// "when was this filed" cells consistent across the three
+// pages an admin can drill through.
+function formatOrderDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(d)
 }
 
 // Truncate complaint text to a row-friendly width with the full
@@ -360,19 +391,21 @@ function ComplaintRow({
         <ComplaintStatusBadge status={complaint.status} />
       </TableCell>
       <TableCell className="font-semibold tabular-nums text-foreground">
-        {/* Plain text for now — no staff order-detail page yet
-            (the resolve button itself is the closest a staff
-            user gets to acting on an order). The next step
-            turns this into a link, same as the waiter page's
-            order-id column. */}
-        #{complaint.order_id}
+        {/* Drill into the order on the new admin detail page.
+            The Resolve button on the right handles the
+            complaint; the link handles the order. Both are
+            independent — admin can resolve without drilling,
+            and can drill without resolving. */}
+        <Link
+          href={`/admin/orders/${complaint.order_id}`}
+          aria-label={`View order #${complaint.order_id} details`}
+          className="text-foreground outline-none hover:text-amber-700 hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:hover:text-amber-300"
+        >
+          #{complaint.order_id}
+        </Link>
       </TableCell>
-      <TableCell className="tabular-nums">
-        {/* No customer-name join exists on ComplaintRead —
-            same gap as the order list endpoint. The admin
-            has the customer list elsewhere; cross-reference
-            is fine until the join is added. */}
-        #{complaint.customer_id}
+      <TableCell>
+        {complaint.customer_name}
       </TableCell>
       <TableCell className="text-sm tabular-nums">
         {formatComplaintDate(complaint.complaint_date)}
@@ -540,6 +573,176 @@ function ComplaintsTableSkeleton() {
               </TableCell>
               <TableCell className="text-right">
                 <Skeleton className="ml-auto h-7 w-20" />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+/**
+ * RecentOrdersAdmin — the latest 10 orders at the admin's
+ * restaurant, with links to the new admin order detail page.
+ *
+ * Why 10 and not the full list: the admin landing on /admin
+ * wants operational context — "what's been happening at my
+ * restaurant today?" — not a paginated order history. The
+ * full list is reachable through the order detail page
+ * (which is what an admin would deep-link to from a
+ * complaint). 10 is enough to scan a typical shift without
+ * committing to a pagination surface.
+ *
+ * Driven by useOrders (the same hook the waiter page uses,
+ * tenant-scoped to the admin via the JWT — the backend's
+ * list_orders returns the admin's restaurant's orders, not
+ * the admin's own). No status filter: showing every status
+ * is the point of an "operational context" section. The
+ * OrderStatusBadge in the Status column colors each row
+ * per the existing palette (sky/amber/emerald/rose).
+ *
+ * Sort: most-recent-first by `order_date`. The backend's
+ * list endpoint already returns orders in a stable
+ * insertion-ish order, so we sort client-side to get the
+ * ten most recent regardless of the wire order. The slice
+ * is post-sort.
+ */
+function RecentOrdersAdmin() {
+  const { user } = useAuth()
+  const restaurantId = user?.rid
+  const query = useOrders()
+
+  if (restaurantId === undefined) {
+    return (
+      <EmptyAdminState
+        title="No restaurant on this admin account"
+        body="This admin account is not linked to a restaurant. The admin view needs a tenant."
+      />
+    )
+  }
+
+  if (query.isPending) {
+    return <RecentOrdersTableSkeleton />
+  }
+
+  if (query.isError) {
+    return (
+      <ErrorState
+        error={query.error}
+        onRetry={() => query.refetch()}
+      />
+    )
+  }
+
+  // Sort by order_date desc and take the 10 most recent.
+  // Empty array while loading keeps the table from flashing.
+  const recent: OrderRead[] = (query.data ?? [])
+    .slice()
+    .sort((a, b) => b.order_date.localeCompare(a.order_date))
+    .slice(0, 10)
+
+  return (
+    <section>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold tracking-[-0.02em] text-foreground sm:text-3xl">
+            Recent orders
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {recent.length === 0
+              ? "No orders yet."
+              : `The ${recent.length} most recent order${recent.length === 1 ? "" : "s"} at this restaurant.`}
+          </p>
+        </div>
+      </header>
+
+      <div className="mt-6">
+        {recent.length === 0 ? (
+          <EmptyAdminState
+            title="No orders yet"
+            body="When a customer places an order at this restaurant, it will appear here."
+          />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-20">Order</TableHead>
+                  <TableHead className="w-32">Status</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead className="w-44">Placed</TableHead>
+                  <TableHead className="w-28 text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recent.map((o) => (
+                  <TableRow key={o.id}>
+                    <TableCell className="font-semibold tabular-nums text-foreground">
+                      <Link
+                        href={`/admin/orders/${o.id}`}
+                        aria-label={`View order #${o.id} details`}
+                        className="text-foreground outline-none hover:text-amber-700 hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm dark:hover:text-amber-300"
+                      >
+                        #{o.id}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <OrderStatusBadge status={o.status} size="sm" />
+                    </TableCell>
+                    <TableCell>{o.customer_name}</TableCell>
+                    <TableCell className="text-sm tabular-nums text-muted-foreground">
+                      {formatOrderDateTime(o.order_date)}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-semibold tabular-nums text-foreground">
+                      {formatPrice(o.total_amount)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// --- Recent-orders skeleton (mirrors ComplaintsTableSkeleton) -------------
+
+function RecentOrdersTableSkeleton() {
+  return (
+    <div
+      className="overflow-hidden rounded-lg border border-border bg-card"
+      aria-hidden="true"
+    >
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-20">Order</TableHead>
+            <TableHead className="w-32">Status</TableHead>
+            <TableHead>Customer</TableHead>
+            <TableHead className="w-44">Placed</TableHead>
+            <TableHead className="w-28 text-right">Total</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <TableRow key={i}>
+              <TableCell>
+                <Skeleton className="h-4 w-12" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-5 w-20 rounded-full" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-32" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-32" />
+              </TableCell>
+              <TableCell className="text-right">
+                <Skeleton className="ml-auto h-4 w-16" />
               </TableCell>
             </TableRow>
           ))}

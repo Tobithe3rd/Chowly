@@ -278,10 +278,33 @@ class Order(Base):
         Integer, ForeignKey("restaurants.id"), nullable=False
     )
     waiter_id = Column(Integer, ForeignKey("waiters.id"), nullable=True)
+    # Cancellation attribution. Both columns stay NULL while the
+    # order is in any non-cancelled state; PATCH /orders/{id}
+    # sets them in the same write that flips status to CANCELLED
+    # (see routers/orders.py:update_order). The FK uses
+    # ondelete=SET NULL so a deleted user doesn't cascade-wipe
+    # order history — the row keeps its cancelled_at timestamp,
+    # and a future backfill can resolve the actor from an audit
+    # log. cancelled_at is timezone-aware to match order_date;
+    # the router sources the timestamp from func.now() (the same
+    # DB clock the cancel-window check uses) so the two are
+    # apples-to-apples.
+    cancelled_by_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
 
     customer = relationship("Customer", back_populates="orders")
     restaurant = relationship("Restaurant", back_populates="orders")
     waiter = relationship("Waiter", back_populates="orders")
+    # One-way: User has no `cancelled_orders` backref because we
+    # never query "every order user X cancelled" today. The join
+    # only flows Order -> User for the read path (OrderRead.
+    # cancelled_by_name, the admin complaint cross-reference,
+    # and a future audit endpoint). Adding the backref would
+    # be a no-op today and would only widen the User ORM
+    # surface — keep it one-way until there's a use.
+    cancelled_by_user = relationship("User")
     items = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )

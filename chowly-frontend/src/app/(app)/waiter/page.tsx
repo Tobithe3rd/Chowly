@@ -538,12 +538,8 @@ function OrderRow({
           #{order.id}
         </Link>
       </TableCell>
-      <TableCell className="cursor-pointer tabular-nums">
-        {/* `customer_id` is the only identifier the list endpoint
-            returns; the Customer row's name isn't joined. Showing
-            the raw id (as "#N") is honest and avoids a per-row
-            N+1 fetch. */}
-        #{order.customer_id}
+      <TableCell className="cursor-pointer">
+        {order.customer_name}
       </TableCell>
       <TableCell className="cursor-pointer">
         <div className="flex flex-wrap items-center gap-1.5">

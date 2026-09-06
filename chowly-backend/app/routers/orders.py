@@ -153,12 +153,57 @@ def _load_order_with_items(db: Session, order_id: int) -> Order:
     would emit a separate SELECT per line after the order was already
     loaded). The chained selectinload pulls all menu_items in one extra
     IN-query rather than N queries.
+
+    Also eager-loads Order.customer, Order.waiter, and
+    Order.cancelled_by_user — the three header-side relationships
+    that OrderRead's @model_validator walks for customer_name,
+    waiter_name, and cancelled_by_name. Without these, the read
+    schema would trigger a lazy SELECT per order after the
+    selectinload, which is a per-row N+1. With them, the
+    serialisation pass is a pure walk of already-loaded
+    attributes.
+
+    OrderItem.chef and OrderItem.bartender are loaded per-line
+    by the staff-dashboard's read path (the only call site that
+    surfaces chef_name / bartender_name on a list); the
+    detail-page callsite already loads the order through this
+    helper, so the same eager-load covers the detail's
+    OrderItemRead walk as well.
     """
     stmt = (
         select(Order)
         .where(Order.id == order_id)
         .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item)
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.items).selectinload(OrderItem.chef),
+            selectinload(Order.items).selectinload(OrderItem.bartender),
+            selectinload(Order.customer),
+            selectinload(Order.waiter),
+            # The cancelling actor is a User, but the
+            # `cancelled_by_name` resolver walks from User to
+            # the matching profile (customer / waiter / chef /
+            # bartender). Loading just the User would trigger
+            # a lazy SELECT for whichever profile matches the
+            # role; the four nested selectinloads cover all
+            # roles in one round-trip. Only one of the four
+            # profiles will exist per User (each User has at
+            # most one of customer_profile / waiter_profile /
+            # chef_profile / bartender_profile, since they're
+            # 1:1 on user_id), so the extra IN-query is
+            # bounded — one row, one profile, regardless of
+            # which role cancelled.
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.customer_profile
+            ),
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.waiter_profile
+            ),
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.chef_profile
+            ),
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.bartender_profile
+            ),
         )
     )
     order = db.execute(stmt).scalar_one_or_none()
@@ -378,7 +423,31 @@ def list_orders(
         .order_by(Order.order_date.desc())
         .limit(200)
         .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item)
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.items).selectinload(OrderItem.chef),
+            selectinload(Order.items).selectinload(OrderItem.bartender),
+            selectinload(Order.customer),
+            selectinload(Order.waiter),
+            # Same nested profile load as the single-order
+            # helper: covers customer/waiter/chef/bartender
+            # cancellation attribution. The list view typically
+            # sees many orders with cancelled_by_user_id null
+            # (non-cancelled orders are the common case), so
+            # the nested loads only fire for the cancelled
+            # rows — SQLAlchemy skips the IN-query when the
+            # FK is null on every row in the page.
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.customer_profile
+            ),
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.waiter_profile
+            ),
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.chef_profile
+            ),
+            selectinload(Order.cancelled_by_user).selectinload(
+                User.bartender_profile
+            ),
         )
     )
     if status_filter is not None:
@@ -524,6 +593,18 @@ def update_order(
 
     order = _load_order_with_items(db, order_id)
 
+    # DB-clock snapshot. The customer-cancel window check
+    # (below) and the cancel-attribution timestamp (further
+    # below) both want a single monotonic "now" that is
+    # apples-to-apples with order_date (which is also a
+    # func.now() at INSERT). One SELECT serves both, and the
+    # value is reused rather than re-querying, so the two
+    # writes see the same clock reading. For the Served /
+    # non-cancel paths the value is unused — it's still
+    # cheap (one indexed call to func.now()) and not worth
+    # gating behind a status-field check.
+    db_now = db.execute(select(func.now())).scalar_one()
+
     # Tenant scope: staff, admin, and the customer-cancel path
     # can only touch orders at the same restaurant. Chef and
     # bartender are already rejected above; customer reach this
@@ -661,7 +742,11 @@ def update_order(
         # rejected as "the window has passed". Comparison
         # operations on offset-naive vs offset-aware datetimes
         # raise in Python, but both sides here are tz-aware.
-        db_now = db.execute(select(func.now())).scalar_one()
+        # `db_now` is hoisted to the function scope above so
+        # the cancel-attribution block below can use the same
+        # DB-clock value for cancelled_at — the two writes
+        # (the customer-cancel window check and the
+        # attribution timestamp) share one source of truth.
         if db_now > order.order_date + CUSTOMER_CANCEL_WINDOW:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -752,6 +837,33 @@ def update_order(
                 f"{payload.status.value}."
             ),
         )
+
+    # Cancel attribution. The same write that flips status to
+    # CANCELLED records who did it and when, so the response
+    # and any subsequent read can answer "Cancelled by X at
+    # Y" without a separate audit endpoint. We set the
+    # timestamp from the same DB clock the cancel-window check
+    # used (db.execute(select(func.now())) above) so the
+    # window math and the attribution timestamp are on the
+    # same source of truth — the two values are guaranteed
+    # to be on the same monotonic clock, which matters when
+    # a UI wants to show "Cancelled 8 minutes after order
+    # was placed" without a clock-skew gap.
+    #
+    # This block only runs when the call is actually flipping
+    # a non-Cancelled order to Cancelled. The state-machine
+    # block above has already rejected:
+    #   - Cancelled -> Cancelled (no-op re-mark)
+    #   - Cancelled -> anything else (terminal reopen)
+    # so by the time we reach this point, order.status is not
+    # CANCELLED and payload.status is CANCELLED, and the
+    # attribution is the "first cancel" event. A staff/admin
+    # cancel flows through the same code path as a customer
+    # self-cancel; the only difference is current_user.id,
+    # which is the value we want either way.
+    if "status" in sent_fields and payload.status is OrderStatus.CANCELLED:
+        order.cancelled_by_user_id = current_user.id
+        order.cancelled_at = db_now
 
     # Apply the partial update. exclude_unset ensures we only write
     # what the client sent, but we already validated the set above so
@@ -968,8 +1080,9 @@ def update_order_item(
     # Existence first (404 if missing) so a missing order doesn't
     # leak as a 403. Same ordering as update_complaint and
     # update_menu_item. The two-level selectinload is required so
-    # the response's menu_item_name can be resolved by
-    # OrderItemClaimResponse._resolve_menu_item_fields without
+    # the response's joined fields (menu_item_name, chef_name,
+    # bartender_name) can be resolved by
+    # OrderItemClaimResponse._resolve_joined_fields without
     # lazy loading after the commit.
     order = _load_order_with_items(db, order_id)
 

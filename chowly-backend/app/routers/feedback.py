@@ -33,7 +33,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.auth import get_current_user
 from app.database import get_db
@@ -224,7 +224,15 @@ def get_complaint(
     _require_order_access(db, order_id, current_user, require_owning_customer=False)
 
     complaint = db.execute(
-        select(Complaint).where(Complaint.order_id == order_id)
+        select(Complaint)
+        .where(Complaint.order_id == order_id)
+        # Eager-load the Customer profile so ComplaintRead.
+        # customer_name resolves at model_validate time without
+        # a per-row lazy SELECT. The relationship is the only
+        # one walked by the read schema today; if a future
+        # field needs the Order or Restaurant too, extend this
+        # chain (don't lazy-load).
+        .options(selectinload(Complaint.customer))
     ).scalar_one_or_none()
     if complaint is None:
         raise HTTPException(

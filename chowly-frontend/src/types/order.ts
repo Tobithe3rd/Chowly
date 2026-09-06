@@ -62,6 +62,16 @@ export interface OrderItemRead {
   subtotal: number
   chef_id: number | null
   bartender_id: number | null
+  // Joined display names from the Chef / Bartender profile
+  // rows. `chef_name` is non-null when `chef_id` is non-null
+  // (the FK is the same row); same for `bartender_name`.
+  // Both stay null on an unclaimed line, matching the
+  // nullable chef_id / bartender_id. The chef and bartender
+  // dashboards read these to render "Claimed by {name}"
+  // instead of the previous generic "Claimed" — see
+  // staff-dashboard.tsx.
+  chef_name: string | null
+  bartender_name: string | null
   status: OrderItemStatus
 }
 
@@ -83,6 +93,22 @@ export interface OrderRead {
   customer_id: number
   restaurant_id: number
   waiter_id: number | null
+  // Joined display names. `customer_name` is always set
+  // (the Order FK is NOT NULL); `waiter_name` is null on
+  // unclaimed orders, parallel to `waiter_id`. The waiter
+  // list and detail pages read these to drop the "#N"
+  // placeholders that used to be the only signal.
+  customer_name: string
+  waiter_name: string | null
+  // Cancellation attribution. All three stay null until
+  // status flips to "Cancelled"; the same backend write
+  // sets status, cancelled_by_user_id, and cancelled_at
+  // together. The waiter's CancelledCard surfaces
+  // `cancelled_by_name` + a relative time of
+  // `cancelled_at` so the operator can see who and when.
+  cancelled_by_user_id: number | null
+  cancelled_at: string | null // ISO 8601 datetime
+  cancelled_by_name: string | null
   items: OrderItemRead[]
   all_lines_ready: boolean
 }
@@ -144,5 +170,8 @@ export interface OrderItemClaimResponse {
   subtotal: number
   chef_id: number | null
   bartender_id: number | null
+  // Mirrors OrderItemRead.chef_name / bartender_name.
+  chef_name: string | null
+  bartender_name: string | null
   status: OrderItemStatus
 }
